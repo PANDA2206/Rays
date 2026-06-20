@@ -16,6 +16,7 @@ import {
   updateStep,
   updateDoc,
   addInstallment,
+  updateInstallment,
   addProjectNote,
   deleteProjectNote,
   deleteProject,
@@ -280,14 +281,46 @@ function SubsidyCard({ project, onSaved }: { project: Project; onSaved: () => Pr
     const today = new Date().toISOString().slice(0, 10);
     const payload: Partial<Project> = { subsidy_amount: num(amt) };
     if (applied) payload.subsidy_applied_date = project.subsidy_applied_date || today;
+
     if (disb) {
+      const dd = project.subsidy_disbursed_date || today;
       payload.subsidy_status = 'disbursed';
-      payload.subsidy_disbursed_date = project.subsidy_disbursed_date || today;
+      payload.subsidy_disbursed_date = dd;
+
+      // Post the subsidy as a PAID installment so it counts toward "Received"
+      // (just like choosing "Subsidy" in Add Payment). Reuse an existing subsidy
+      // installment if there is one, so it never double-counts.
+      const existing = await getInstallments(project.id);
+      const subs = existing.filter((i) => (i.payment_type || '').toLowerCase() === 'subsidy');
+      if (subs.length) {
+        await updateInstallment(subs[0].id, { amount: num(amt), due_date: dd, status: 'paid' });
+      } else if (num(amt) > 0) {
+        const nextNo = Math.max(0, ...existing.map((e) => e.installment_no ?? 0)) + 1;
+        await addInstallment({
+          project_id: project.id,
+          installment_no: nextNo,
+          amount: num(amt),
+          due_date: dd,
+          status: 'paid',
+          payment_type: 'Subsidy',
+        });
+      }
+      // recompute received + balance from all installments
+      const all = await getInstallments(project.id);
+      const received = all.reduce((s, i) => s + num(i.amount), 0);
+      payload.amount_paid = received;
+      payload.balance = num(project.total_cost) - received;
     } else {
       payload.subsidy_status = applied ? 'applied' : 'pending';
     }
+
     await updateProject(project.id, payload);
-    await logActivity({ action: 'Subsidy updated', entity_type: 'project', project_id: project.id, project_name: project.customer_name });
+    await logActivity({
+      action: 'Subsidy updated' + (disb ? ' → disbursed (counted as received)' : ''),
+      entity_type: 'project',
+      project_id: project.id,
+      project_name: project.customer_name,
+    });
     await onSaved();
   };
 

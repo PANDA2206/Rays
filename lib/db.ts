@@ -154,6 +154,10 @@ export async function getAllInstallments(): Promise<
   return data ?? [];
 }
 
+export async function updateInstallment(id: string, data: Partial<Installment>): Promise<void> {
+  await supabase.from('installments').update(data).eq('id', id);
+}
+
 export async function addInstallment(row: Partial<Installment>): Promise<void> {
   try {
     const { error } = await supabase.from('installments').insert(row);
