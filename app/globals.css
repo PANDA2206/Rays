@@ -1,0 +1,134 @@
+@import "tailwindcss";
+
+/* ── VOLTEDGE deep-navy theme (ported from the Streamlit app) ───────────────── */
+:root {
+  --bg: #0a1322;
+  --panel: #0f1b2e;
+  --panel-2: #1e293b;
+  --border: #1e293b;
+  --border-2: #16304d;
+  --text: #f1f5f9;
+  --text-muted: #94a3b8;
+  --text-dim: #64748b;
+  --red: #dc2626;
+  --green: #16a34a;
+  --orange: #f97316;
+}
+
+html,
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* thin dark scrollbars to match the theme */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg);
+}
+::-webkit-scrollbar-thumb {
+  background: #233148;
+  border-radius: 8px;
+}
+
+/* ── Reusable component classes ─────────────────────────────────────────────── */
+.ve-panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.ve-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+}
+
+.ve-input {
+  width: 100%;
+  background: #0d1a2e;
+  border: 1px solid var(--border-2);
+  border-radius: 8px;
+  padding: 8px 12px;
+  color: var(--text);
+  font-size: 0.85rem;
+  outline: none;
+}
+.ve-input:focus {
+  border-color: #2563eb;
+}
+.ve-input::placeholder {
+  color: #475569;
+}
+
+.ve-label {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+  display: block;
+}
+
+.ve-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 8px;
+  padding: 8px 16px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid var(--border-2);
+  background: transparent;
+  color: var(--text-muted);
+  transition: all 0.12s ease;
+}
+.ve-btn:hover {
+  background: var(--panel-2);
+  color: var(--text);
+}
+.ve-btn-primary {
+  background: var(--red);
+  border-color: var(--red);
+  color: #fff;
+}
+.ve-btn-primary:hover {
+  background: #b91c1c;
+  color: #fff;
+}
+.ve-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.ve-badge {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: #fff;
+}
+
+.ve-link {
+  color: var(--text);
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 0;
+  text-align: left;
+  font: inherit;
+}
+.ve-link:hover {
+  color: var(--orange);
+  text-decoration: underline;
+}
