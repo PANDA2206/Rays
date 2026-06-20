@@ -131,16 +131,28 @@ CREATE TABLE IF NOT EXISTS public.epcs (
 );
 
 CREATE TABLE IF NOT EXISTS public.epc_transactions (
-  id                UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  epc_id            UUID REFERENCES public.epcs(id) ON DELETE CASCADE,
-  customer_name     TEXT,
-  purchase_material TEXT,
-  purchase_base     DECIMAL(15, 2) DEFAULT 0,
-  purchase_gst_pct  DECIMAL(5, 2)  DEFAULT 0,
-  sale_material     TEXT,
-  sale_base         DECIMAL(15, 2) DEFAULT 0,
-  sale_gst_pct      DECIMAL(5, 2)  DEFAULT 0,
-  created_at        TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+  id                  UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  epc_id              UUID REFERENCES public.epcs(id) ON DELETE CASCADE,
+  customer_name       TEXT,
+  purchase_material   TEXT,
+  purchase_base       DECIMAL(15, 2) DEFAULT 0,
+  purchase_gst_pct    DECIMAL(5, 2)  DEFAULT 0,
+  purchase_invoice_no TEXT,
+  sale_material       TEXT,
+  sale_base           DECIMAL(15, 2) DEFAULT 0,
+  sale_gst_pct        DECIMAL(5, 2)  DEFAULT 0,
+  sale_invoice_no     TEXT,
+  created_at          TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Project fees received from an EPC (per customer)
+CREATE TABLE IF NOT EXISTS public.epc_project_fees (
+  id            UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  epc_id        UUID REFERENCES public.epcs(id) ON DELETE CASCADE,
+  customer_name TEXT,
+  fee_date      DATE,
+  amount        DECIMAL(15, 2) DEFAULT 0,
+  created_at    TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
 -- ── Disable RLS (app uses the anon/publishable key) ─────────────────────────
@@ -153,6 +165,7 @@ ALTER TABLE public.project_documents DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.project_notes     DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.epcs              DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.epc_transactions  DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.epc_project_fees  DISABLE ROW LEVEL SECURITY;
 
 -- ── Helpful indexes ─────────────────────────────────────────────────────────
 CREATE INDEX IF NOT EXISTS idx_projects_status      ON public.projects(project_status);

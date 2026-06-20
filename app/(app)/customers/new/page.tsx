@@ -27,7 +27,7 @@ export default function AddProjectPage() {
     name: '', mobile: '', altMobile: '', email: '', aadhar: '', elecBill: '',
     addr: '', village: '', taluka: '', district: '', pin: '', latlng: '',
     createdDate: todayStr(), exec: 'Voltedge', size: '', conn: 'On-Grid',
-    statusDisp: 'Active', notes: '',
+    statusDisp: 'Active', notes: '', projectCode: '',
   });
   const set = (k: keyof typeof f, v: string) => setF((p) => ({ ...p, [k]: v }));
 
@@ -94,6 +94,7 @@ export default function AddProjectPage() {
     try {
       const result = await createProject({
         customer_name: f.name.trim(),
+        project_code: f.projectCode.trim() || null,
         mobile: f.mobile,
         alt_mobile: f.altMobile,
         email: f.email,
@@ -223,6 +224,9 @@ export default function AddProjectPage() {
                 <option>Active</option>
                 <option>Completed</option>
               </select>
+            </div>
+            <div className="mt-2">
+              <Field label="Project ID (optional)" value={f.projectCode} onChange={(v) => set('projectCode', v)} placeholder="Leave blank to set later" />
             </div>
           </Section>
 

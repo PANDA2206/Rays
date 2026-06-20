@@ -10,6 +10,7 @@ import type {
   AppUser,
   Epc,
   EpcTransaction,
+  EpcProjectFee,
 } from './types';
 
 const DEFAULT_STEPS: [number, string][] = [
@@ -325,6 +326,31 @@ export async function deleteEpc(id: string): Promise<void> {
 
 export async function deleteEpcTransaction(id: string): Promise<void> {
   await supabase.from('epc_transactions').delete().eq('id', id);
+}
+
+// ── EPC project fees ─────────────────────────────────────────────────────────
+
+export async function getEpcProjectFees(epcId: string): Promise<EpcProjectFee[]> {
+  const { data } = await supabase
+    .from('epc_project_fees')
+    .select('*')
+    .eq('epc_id', epcId)
+    .order('fee_date', { ascending: false });
+  return (data ?? []) as EpcProjectFee[];
+}
+
+export async function createEpcProjectFee(data: Partial<EpcProjectFee>): Promise<void> {
+  await supabase.from('epc_project_fees').insert(data);
+}
+
+export async function deleteEpcProjectFee(id: string): Promise<void> {
+  await supabase.from('epc_project_fees').delete().eq('id', id);
+}
+
+// ── Delete a project (admin) — cascades to steps/docs/notes/installments via FK ──
+export async function deleteProject(id: string, name?: string | null): Promise<void> {
+  await supabase.from('projects').delete().eq('id', id);
+  await logActivity({ action: 'Deleted project', entity_type: 'project', project_id: id, project_name: name ?? null });
 }
 
 export async function ensureVoltedgeEpc(epcs: Epc[]): Promise<void> {

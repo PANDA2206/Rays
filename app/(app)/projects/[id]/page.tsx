@@ -11,14 +11,17 @@ import {
   getInstallments,
   getProjectNotes,
   getProjectLogs,
+  getEpcs,
   updateProject,
   updateStep,
   updateDoc,
   addInstallment,
   addProjectNote,
   deleteProjectNote,
+  deleteProject,
   logActivity,
 } from '@/lib/db';
+import { useAuth } from '@/lib/auth';
 import type {
   Project,
   ProjectStep,
@@ -52,6 +55,7 @@ const fmtDateTime = (v?: string | null) => {
 export default function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
+  const { isAdmin } = useAuth();
   const [loading, setLoading] = useState(true);
   const [project, setProject] = useState<Project | null>(null);
   const [steps, setSteps] = useState<ProjectStep[]>([]);
@@ -59,6 +63,7 @@ export default function ProjectDetailPage() {
   const [insts, setInsts] = useState<Installment[]>([]);
   const [notes, setNotes] = useState<ProjectNote[]>([]);
   const [logs, setLogs] = useState<ActivityLog[]>([]);
+  const [epcNames, setEpcNames] = useState<string[]>(['Voltedge']);
 
   const load = useCallback(async () => {
     const p = await getProjectById(id);
@@ -67,18 +72,23 @@ export default function ProjectDetailPage() {
       return;
     }
     setProject(p);
-    const [s, d, i, n, l] = await Promise.all([
+    const [s, d, i, n, l, epcs] = await Promise.all([
       getOrCreateSteps(id),
       getOrCreateDocs(id),
       getInstallments(id),
       getProjectNotes(id),
       getProjectLogs(id),
+      getEpcs(),
     ]);
     setSteps(s);
     setDocs(d);
     setInsts(i);
     setNotes(n);
     setLogs(l);
+    setEpcNames([
+      'Voltedge',
+      ...epcs.map((e) => e.name).filter((nm) => nm && nm.toLowerCase() !== 'voltedge'),
+    ]);
     setLoading(false);
   }, [id, router]);
 
@@ -90,7 +100,6 @@ export default function ProjectDetailPage() {
 
   const doneSteps = steps.filter((s) => s.status === 'completed').length;
   const progress = steps.length ? Math.round((doneSteps / steps.length) * 100) : 0;
-  const projectCode = project.project_code || `EPC-${id.slice(0, 8).toUpperCase()}`;
   const curStage =
     steps.find((s) => s.status === 'in_progress') ||
     steps.find((s) => s.status === 'pending') ||
@@ -114,7 +123,7 @@ export default function ProjectDetailPage() {
         <Card title="📑 PROJECT SUMMARY">
           <div className="flex gap-4 items-center">
             <div className="flex-1 grid grid-cols-2 gap-x-4 gap-y-1">
-              <KV label="Project ID" value={projectCode} color="#f97316" />
+              <ProjectIdField project={project} isAdmin={isAdmin} onSaved={load} />
               <KV label="Customer Name" value={project.customer_name || '-'} />
               <KV label="Last Updated On" value={fmtDateTime(project.updated_at || project.created_at)} />
               <KV label="Current Stage" value={curStage ? `#${curStage.step_no} · ${curStage.step_name}` : '-'} />
@@ -128,7 +137,7 @@ export default function ProjectDetailPage() {
       {/* customer | project info */}
       <div className="grid md:grid-cols-2 gap-3">
         <CustomerInfo project={project} onSaved={load} />
-        <ProjectInfo project={project} onSaved={load} />
+        <ProjectInfo project={project} epcNames={epcNames} onSaved={load} />
       </div>
 
       {/* workflow */}
@@ -165,6 +174,41 @@ export default function ProjectDetailPage() {
         </div>
         <Timeline logs={logs} />
       </div>
+
+      {/* admin-only danger zone */}
+      {isAdmin && <DangerZone project={project} />}
+    </div>
+  );
+}
+
+function DangerZone({ project }: { project: Project }) {
+  const router = useRouter();
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const del = async () => {
+    setBusy(true);
+    await deleteProject(project.id, project.customer_name);
+    router.push('/customers');
+  };
+
+  return (
+    <div className="rounded-xl p-4 mt-2" style={{ background: '#1a0a0a', border: '1px solid #7f1d1d' }}>
+      <div className="font-bold text-sm mb-1" style={{ color: '#ef4444' }}>⚠️ Danger Zone (Admin)</div>
+      <div className="text-slate-400 text-xs mb-3">
+        Deleting this project permanently removes it and all its installments, steps, documents and notes. This cannot be undone.
+      </div>
+      {!confirming ? (
+        <button className="ve-btn" style={{ borderColor: '#7f1d1d', color: '#ef4444' }} onClick={() => setConfirming(true)}>
+          🗑️ Delete this project
+        </button>
+      ) : (
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-sm text-slate-300">Delete <b>{project.customer_name}</b> permanently?</span>
+          <button className="ve-btn ve-btn-primary" disabled={busy} onClick={del}>{busy ? 'Deleting…' : 'Yes, delete'}</button>
+          <button className="ve-btn" disabled={busy} onClick={() => setConfirming(false)}>Cancel</button>
+        </div>
+      )}
     </div>
   );
 }
@@ -264,8 +308,8 @@ function SubsidyCard({ project, onSaved }: { project: Project; onSaved: () => Pr
 
 // ── Customer info ─────────────────────────────────────────────────────────────
 function CustomerInfo({ project, onSaved }: { project: Project; onSaved: () => Promise<void> }) {
+  // Customer name is intentionally NOT editable here — it's locked after creation.
   const [v, setV] = useState({
-    customer_name: project.customer_name || '',
     mobile: project.mobile || '',
     alt_mobile: project.alt_mobile || '',
     email: project.email || '',
@@ -276,7 +320,7 @@ function CustomerInfo({ project, onSaved }: { project: Project; onSaved: () => P
   const s = (k: keyof typeof v, val: string) => setV((p) => ({ ...p, [k]: val }));
   const save = async () => {
     await updateProject(project.id, v);
-    await logActivity({ action: 'Edited customer info', entity_type: 'project', project_id: project.id, project_name: v.customer_name });
+    await logActivity({ action: 'Edited customer info', entity_type: 'project', project_id: project.id, project_name: project.customer_name });
     await onSaved();
   };
   return (
@@ -290,6 +334,7 @@ function CustomerInfo({ project, onSaved }: { project: Project; onSaved: () => P
         <KV label="PAN Number" value={project.pan_number || '-'} />
       </div>
       <Toggle label="✏️ Edit Customer Information">
+        <div className="text-[0.7rem] text-slate-500">🔒 Customer name is locked and cannot be changed.</div>
         {(Object.keys(v) as (keyof typeof v)[]).map((k) => (
           <input key={k} className="ve-input" value={v[k]} placeholder={k.replace(/_/g, ' ')} onChange={(e) => s(k, e.target.value)} />
         ))}
@@ -299,8 +344,55 @@ function CustomerInfo({ project, onSaved }: { project: Project; onSaved: () => P
   );
 }
 
+// ── Project ID (editable: settable once by anyone; only admins can change it after) ──
+function ProjectIdField({ project, isAdmin, onSaved }: { project: Project; isAdmin: boolean; onSaved: () => Promise<void> }) {
+  const current = project.project_code?.trim() || '';
+  const [editing, setEditing] = useState(false);
+  const [val, setVal] = useState(current);
+  const [busy, setBusy] = useState(false);
+
+  // already set → only admins may change it; blank → anyone may set it once
+  const canEdit = current === '' || isAdmin;
+
+  const save = async () => {
+    const code = val.trim();
+    if (!code) return;
+    setBusy(true);
+    await updateProject(project.id, { project_code: code });
+    await logActivity({ action: `Set Project ID → ${code}`, entity_type: 'project', project_id: project.id, project_name: project.customer_name });
+    setEditing(false);
+    setBusy(false);
+    await onSaved();
+  };
+
+  return (
+    <div className="mb-2">
+      <div className="text-slate-500 text-[0.68rem] uppercase tracking-wide">Project ID</div>
+      {editing ? (
+        <div className="flex gap-1 mt-1">
+          <input className="ve-input py-1 text-sm" value={val} onChange={(e) => setVal(e.target.value)} placeholder="e.g. EPC-2026-001" />
+          <button className="ve-btn ve-btn-primary px-2 py-1" disabled={busy} onClick={save}>Save</button>
+          <button className="ve-btn px-2 py-1" onClick={() => { setEditing(false); setVal(current); }}>✕</button>
+        </div>
+      ) : (
+        <div className="flex items-center gap-2 mt-0.5">
+          <span className="font-semibold text-[0.9rem]" style={{ color: '#f97316' }}>{current || '-'}</span>
+          {canEdit && (
+            <button className="text-slate-500 hover:text-slate-300 text-xs" onClick={() => setEditing(true)} title={current ? 'Edit Project ID' : 'Set Project ID'}>
+              ✏️
+            </button>
+          )}
+        </div>
+      )}
+      {current !== '' && !isAdmin && (
+        <div className="text-[0.62rem] text-slate-600 mt-0.5">Locked — only an admin can change it.</div>
+      )}
+    </div>
+  );
+}
+
 // ── Project info ──────────────────────────────────────────────────────────────
-function ProjectInfo({ project, onSaved }: { project: Project; onSaved: () => Promise<void> }) {
+function ProjectInfo({ project, epcNames, onSaved }: { project: Project; epcNames: string[]; onSaved: () => Promise<void> }) {
   const [v, setV] = useState({
     system_size_kwp: String(num(project.system_size_kwp)),
     connection_type: project.connection_type || 'On-Grid',
@@ -341,7 +433,15 @@ function ProjectInfo({ project, onSaved }: { project: Project; onSaved: () => Pr
           <select className="ve-input" value={v.connection_type} onChange={(e) => s('connection_type', e.target.value)}>
             <option>On-Grid</option><option>Off-Grid</option><option>Hybrid</option>
           </select>
-          <input className="ve-input" value={v.execution_partner} onChange={(e) => s('execution_partner', e.target.value)} placeholder="Execution Partner" />
+          <select className="ve-input" value={v.execution_partner} onChange={(e) => s('execution_partner', e.target.value)}>
+            <option value="">— Execution Partner —</option>
+            {(v.execution_partner && !epcNames.includes(v.execution_partner)
+              ? [v.execution_partner, ...epcNames]
+              : epcNames
+            ).map((o) => (
+              <option key={o} value={o}>{o}</option>
+            ))}
+          </select>
           <input className="ve-input" value={v.discom} onChange={(e) => s('discom', e.target.value)} placeholder="Discom" />
           <input className="ve-input" value={v.bank_name} onChange={(e) => s('bank_name', e.target.value)} placeholder="Bank Name" />
           <select className="ve-input" value={v.loan_status} onChange={(e) => s('loan_status', e.target.value)}>

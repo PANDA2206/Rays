@@ -135,8 +135,19 @@ export interface EpcTransaction {
   purchase_material?: string | null;
   purchase_base?: number | null;
   purchase_gst_pct?: number | null;
+  purchase_invoice_no?: string | null;
   sale_material?: string | null;
   sale_base?: number | null;
   sale_gst_pct?: number | null;
+  sale_invoice_no?: string | null;
+  created_at?: string | null;
+}
+
+export interface EpcProjectFee {
+  id: string;
+  epc_id: string;
+  customer_name?: string | null;
+  fee_date?: string | null;
+  amount?: number | null;
   created_at?: string | null;
 }

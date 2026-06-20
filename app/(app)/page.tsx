@@ -44,11 +44,12 @@ export default function OverviewPage() {
         setProjects(pr);
         setInstallments(inst);
         setLogs(lg);
-        const queueIds = pr
+        // load steps for all active projects so the (due-date-ordered) queue
+        // always has stage/next-action data regardless of which 8 surface.
+        const activeIds = pr
           .filter((p) => !['completed', 'cancelled'].includes(p.project_status))
-          .slice(0, 8)
           .map((p) => p.id);
-        const st = await getProjectSteps(queueIds.length ? queueIds : pr.slice(0, 8).map((p) => p.id));
+        const st = await getProjectSteps(activeIds.length ? activeIds : pr.slice(0, 8).map((p) => p.id));
         setSteps(st);
         if (isAdmin) {
           const [us, al] = await Promise.all([getAppUsers(), getActivityLogs(500)]);
@@ -106,15 +107,31 @@ export default function OverviewPage() {
     color: STATUS_COLORS[s] ?? '#94a3b8',
   }));
 
-  // priority queue + current stage
-  const queue =
-    projects.filter((p) => !['completed', 'cancelled'].includes(p.project_status)).slice(0, 8) ||
-    projects.slice(0, 8);
+  // priority queue — active projects, ordered by soonest due date first (most
+  // urgent at the top); projects with no due date fall to the bottom.
+  const active_projects = projects.filter(
+    (p) => !['completed', 'cancelled'].includes(p.project_status)
+  );
+  const queue = [...active_projects]
+    .sort((a, b) => {
+      const da = dueByProj[a.id];
+      const db = dueByProj[b.id];
+      if (da && db) return da.localeCompare(db);
+      if (da) return -1;
+      if (db) return 1;
+      return 0; // keep the created_at order from getProjects()
+    })
+    .slice(0, 8);
+
+  // current stage (in-progress step) and next action (first pending step)
   const stageByProj: Record<string, string> = {};
+  const nextActionByProj: Record<string, string> = {};
   for (const p of queue) {
-    const ps = steps.filter((s) => s.project_id === p.id);
+    const ps = steps.filter((s) => s.project_id === p.id).sort((a, b) => a.step_no - b.step_no);
     const cur = ps.find((s) => s.status === 'in_progress') || ps.find((s) => s.status === 'pending');
     if (cur) stageByProj[p.id] = cur.step_name;
+    const firstPending = ps.find((s) => s.status === 'pending');
+    if (firstPending) nextActionByProj[p.id] = firstPending.step_name;
   }
 
   // employee performance (admin)
@@ -205,9 +222,10 @@ export default function OverviewPage() {
             <div className="p-4 text-slate-500 text-sm">No projects yet. Add one in Add Project.</div>
           ) : (
             queue.map((p) => {
-              const code = p.project_code || `EPC-${p.id.slice(0, 8).toUpperCase()}`;
+              const code = p.project_code?.trim() || '-';
               const stage = stageByProj[p.id] || STATUS_LABELS[p.project_status] || '—';
-              const nxt = !['completed', 'cancelled'].includes(p.project_status) ? 'Follow-up required' : '—';
+              // Next action = the next pending workflow step (or '—' when none)
+              const nxt = nextActionByProj[p.id] || '—';
               const due = dueByProj[p.id] || '—';
               return (
                 <div key={p.id} className="grid grid-cols-[1.2fr_1.5fr_1.3fr_1.5fr_1.5fr_1fr_0.4fr] px-3.5 py-2.5 items-center text-[0.78rem]" style={{ borderTop: '1px solid #1e293b' }}>

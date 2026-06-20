@@ -12,7 +12,7 @@ import {
   logActivity,
 } from '@/lib/db';
 import type { Project } from '@/lib/types';
-import { num, epcDisplayId, projectDisplayId } from '@/lib/format';
+import { num } from '@/lib/format';
 import { StatusBadge, Spinner } from '@/components/ui';
 
 const PAGE_SIZE = 20;
@@ -47,9 +47,7 @@ export default function CustomerListPage() {
           r.customer_name,
           r.mobile,
           r.project_code,
-          r.epc_name,
-          epcDisplayId(r),
-          projectDisplayId(r),
+          r.execution_partner,
         ]
           .filter(Boolean)
           .some((v) => String(v).toLowerCase().includes(q))
@@ -126,9 +124,9 @@ export default function CustomerListPage() {
                 <button className="ve-link text-[0.82rem] font-semibold" onClick={() => setQePid(row.id)} title="Quick Edit">
                   {row.customer_name || '(no name)'}
                 </button>
-                <span className="text-[0.75rem] text-slate-400">{projectDisplayId(row)}</span>
+                <span className="text-[0.75rem] text-slate-400">{row.project_code?.trim() || '-'}</span>
                 <span className="text-[0.75rem]">{row.mobile || '-'}</span>
-                <span className="text-[0.75rem] text-slate-500">{epcDisplayId(row)}</span>
+                <span className="text-[0.75rem] text-slate-500">{row.execution_partner?.trim() || '-'}</span>
                 <span className="text-[0.8rem] font-semibold">₹ {num(row.balance).toLocaleString('en-IN')}</span>
                 <span><StatusBadge status={row.project_status} /></span>
                 <button onClick={() => router.push(`/projects/${row.id}`)} title="Open full details">📂</button>
