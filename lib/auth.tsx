@@ -1,20 +1,42 @@
 'use client';
 
 // ── Auth context (ported from streamlit_app/modules/auth.py) ──────────────────
-// Google sign-in is handled by Supabase Auth (configure the Google provider in
-// the Supabase dashboard). On login we mirror the user into `app_users` and load
-// their role + approval status, exactly like load_user_from_db() did.
+// Direct Google OAuth using the SAME credentials as the Streamlit app (no
+// Supabase Auth). The signed-in identity is kept in localStorage (like Streamlit's
+// session_state); we then mirror the user into `app_users` and load their role +
+// approval status, exactly like load_user_from_db() did.
 
 import { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { supabase } from './supabase';
 import type { AppUser, UserRole, UserStatus } from './types';
 
 const ADMIN_EMAIL = 'voltedgeenergysolutions011@gmail.com';
+const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID!;
+const IDENTITY_KEY = 've_identity';
 
-interface SessionIdentity {
+export interface SessionIdentity {
   email: string;
   name: string;
   picture: string;
+}
+
+// ── localStorage helpers (shared with the OAuth callback page) ────────────────
+export function storeIdentity(identity: SessionIdentity) {
+  if (typeof window !== 'undefined') {
+    localStorage.setItem(IDENTITY_KEY, JSON.stringify(identity));
+  }
+}
+function readIdentity(): SessionIdentity | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(IDENTITY_KEY);
+    return raw ? (JSON.parse(raw) as SessionIdentity) : null;
+  } catch {
+    return null;
+  }
+}
+function clearIdentity() {
+  if (typeof window !== 'undefined') localStorage.removeItem(IDENTITY_KEY);
 }
 
 interface AuthState {
@@ -26,24 +48,12 @@ interface AuthState {
   status: UserStatus;
   employeeCode: string;
   isAdmin: boolean;
-  signInWithGoogle: () => Promise<void>;
+  signInWithGoogle: () => void;
   signOut: () => Promise<void>;
   refresh: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthState | null>(null);
-
-function identityFromUser(user: {
-  email?: string;
-  user_metadata?: Record<string, unknown>;
-}): SessionIdentity {
-  const m = (user.user_metadata ?? {}) as Record<string, string>;
-  return {
-    email: user.email ?? '',
-    name: m.full_name || m.name || user.email || '',
-    picture: m.avatar_url || m.picture || '',
-  };
-}
 
 /** Ensure an app_users row exists for this email, assign a VE-### code, return it. */
 async function loadOrCreateAppUser(identity: SessionIdentity): Promise<AppUser | null> {
@@ -102,14 +112,36 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [appUser, setAppUser] = useState<AppUser | null>(null);
 
   const hydrate = useCallback(async () => {
-    const { data } = await supabase.auth.getUser();
-    if (!data.user) {
+    // Handle the Google OAuth redirect: Google returns to the bare origin with
+    // ?code=... (same pattern as the Streamlit app). Exchange it, then clean the URL.
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      const code = url.searchParams.get('code');
+      if (code) {
+        try {
+          const res = await fetch('/api/auth/token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ code, redirect_uri: window.location.origin }),
+          });
+          const data = await res.json();
+          if (res.ok && !data.error) {
+            storeIdentity({ email: data.email, name: data.name, picture: data.picture });
+          }
+        } catch {
+          // ignore — falls through to login screen
+        }
+        window.history.replaceState({}, '', window.location.origin + '/');
+      }
+    }
+
+    const id = readIdentity();
+    if (!id) {
       setIdentity(null);
       setAppUser(null);
       setLoading(false);
       return;
     }
-    const id = identityFromUser(data.user);
     setIdentity(id);
     const u = await loadOrCreateAppUser(id);
     setAppUser(u);
@@ -118,30 +150,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     hydrate();
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (!session?.user) {
-        setIdentity(null);
-        setAppUser(null);
-        setLoading(false);
-      } else {
-        hydrate();
-      }
-    });
-    return () => sub.subscription.unsubscribe();
   }, [hydrate]);
 
-  const signInWithGoogle = useCallback(async () => {
-    await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: {
-        redirectTo: typeof window !== 'undefined' ? window.location.origin : undefined,
-        queryParams: { prompt: 'select_account' },
-      },
+  const signInWithGoogle = useCallback(() => {
+    const redirectUri = window.location.origin;
+    const state = Math.random().toString(36).slice(2);
+    const params = new URLSearchParams({
+      client_id: GOOGLE_CLIENT_ID,
+      redirect_uri: redirectUri,
+      response_type: 'code',
+      scope: 'openid email profile',
+      access_type: 'offline',
+      prompt: 'select_account',
+      state,
     });
+    window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
   }, []);
 
   const signOut = useCallback(async () => {
-    await supabase.auth.signOut();
+    clearIdentity();
     setIdentity(null);
     setAppUser(null);
   }, []);
@@ -170,4 +197,9 @@ export function useAuth(): AuthState {
   const ctx = useContext(AuthContext);
   if (!ctx) throw new Error('useAuth must be used within <AuthProvider>');
   return ctx;
+}
+
+/** Current identity for activity logging (reads localStorage). */
+export function currentIdentity(): SessionIdentity | null {
+  return readIdentity();
 }

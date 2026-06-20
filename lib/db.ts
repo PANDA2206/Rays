@@ -66,17 +66,16 @@ export async function getActivityLogs(limit = 50, userEmail?: string): Promise<A
   }
 }
 
-// Lightweight reader of the current session identity for logging.
+// Lightweight reader of the current session identity for logging (localStorage,
+// set by the Google OAuth callback — see lib/auth.tsx).
 async function getSessionUser(): Promise<{ email: string; name: string; picture: string } | null> {
-  const { data } = await supabase.auth.getUser();
-  const u = data.user;
-  if (!u) return null;
-  const m = (u.user_metadata ?? {}) as Record<string, string>;
-  return {
-    email: u.email ?? '',
-    name: m.full_name || m.name || u.email || '',
-    picture: m.avatar_url || m.picture || '',
-  };
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem('ve_identity');
+    return raw ? (JSON.parse(raw) as { email: string; name: string; picture: string }) : null;
+  } catch {
+    return null;
+  }
 }
 
 // ── Projects ─────────────────────────────────────────────────────────────────
