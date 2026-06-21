@@ -23,6 +23,7 @@ const NAV: NavItem[] = [
   { label: 'EPC Partners', icon: '🏭', href: '/epc', adminOnly: true },
   { label: 'Users', icon: '👤', href: '/users', adminOnly: true },
   { label: 'Settings', icon: '⚙️', href: '/settings' },
+  { label: 'Inventory', icon: '📦', href: '/inventory' }, // NAV[7]
 ];
 
 function Sidebar() {
@@ -55,6 +56,9 @@ function Sidebar() {
         </div>
         <NavLink item={NAV[1]} active={isActive('/customers') && pathname === '/customers'} />
         <NavLink item={NAV[2]} active={pathname === '/customers/new'} />
+
+        <div className="h-2" />
+        <NavLink item={NAV[7]} active={isActive('/inventory')} />
 
         {isAdmin && (
           <>

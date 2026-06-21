@@ -140,6 +140,8 @@ export interface EpcTransaction {
   sale_base?: number | null;
   sale_gst_pct?: number | null;
   sale_invoice_no?: string | null;
+  sale_item_id?: string | null;
+  sale_quantity?: number | null;
   created_at?: string | null;
 }
 
@@ -150,4 +152,57 @@ export interface EpcProjectFee {
   fee_date?: string | null;
   amount?: number | null;
   created_at?: string | null;
+}
+
+// ── Inventory ────────────────────────────────────────────────────────────────
+
+export interface InventoryItem {
+  id: string;
+  name: string;
+  category?: string | null;
+  unit?: string | null;
+  unit_cost?: number | null;
+  reorder_level?: number | null;
+  created_at?: string | null;
+}
+
+export type MovementType = 'in' | 'out';
+
+export interface InventoryMovement {
+  id: string;
+  item_id: string;
+  type: MovementType | string;
+  quantity?: number | null;
+  unit_price?: number | null;
+  base_amount?: number | null;
+  gst_pct?: number | null;
+  expense?: number | null;
+  source?: string | null;
+  source_ref?: string | null;
+  party?: string | null;
+  reference?: string | null;
+  note?: string | null;
+  movement_date?: string | null;
+  created_at?: string | null;
+}
+
+export interface InventoryExpense {
+  id: string;
+  category?: string | null;
+  description?: string | null;
+  amount?: number | null;
+  tax?: number | null;
+  expense_date?: string | null;
+  source?: string | null;
+  source_ref?: string | null;
+  created_at?: string | null;
+}
+
+/** An item plus its computed live stock figures. */
+export interface InventoryItemStock extends InventoryItem {
+  qtyIn: number;
+  qtyOut: number;
+  qty: number;          // remaining = in − out
+  stockValue: number;   // qty × unit_cost
+  low: boolean;         // qty <= reorder_level
 }

@@ -16,19 +16,25 @@ import {
   getEpcProjectFees,
   createEpcProjectFee,
   deleteEpcProjectFee,
+  getInventoryItems,
+  createInventoryMovement,
+  createInventoryExpense,
   logActivity,
 } from '@/lib/db';
-import type { Epc, EpcTransaction, EpcProjectFee, Project } from '@/lib/types';
+import type { Epc, EpcTransaction, EpcProjectFee, Project, InventoryItem } from '@/lib/types';
 import { formatCurrency, num } from '@/lib/format';
 import { Spinner } from '@/components/ui';
 
 const GST_OPTS = [0, 5, 12, 18, 28];
+const EXPENSE_CATS = ['Transport', 'Labour', 'Light Bill', 'Rent', 'Petrol', 'Other'];
+const todayISO = () => new Date().toISOString().slice(0, 10);
 
 export default function EpcPage() {
   const [loading, setLoading] = useState(true);
   const [epcs, setEpcs] = useState<Epc[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [txns, setTxns] = useState<EpcTransaction[]>([]);
+  const [items, setItems] = useState<InventoryItem[]>([]);
   const [selName, setSelName] = useState('— Select EPC —');
   const [showAdd, setShowAdd] = useState(false);
 
@@ -43,6 +49,7 @@ export default function EpcPage() {
     (async () => {
       await reloadEpcs();
       setProjects(await getProjects());
+      setItems(await getInventoryItems());
       setLoading(false);
     })();
   }, []);
@@ -97,6 +104,7 @@ export default function EpcPage() {
           epc={epc}
           projects={projects}
           txns={txns}
+          items={items}
           onChanged={async () => {
             await reloadEpcs();
             setTxns(await getEpcTransactions(epc.id));
@@ -135,11 +143,12 @@ function AddEpcForm({ onAdded }: { onAdded: () => void }) {
 }
 
 function EpcDetail({
-  epc, projects, txns, onChanged, onDeleted,
+  epc, projects, txns, items, onChanged, onDeleted,
 }: {
   epc: Epc;
   projects: Project[];
   txns: EpcTransaction[];
+  items: InventoryItem[];
   onChanged: () => Promise<void>;
   onDeleted: () => Promise<void>;
 }) {
@@ -228,6 +237,7 @@ function EpcDetail({
           epcId={epc.id}
           epcName={epc.name}
           customers={epcCustomers}
+          items={items}
           onAdded={async () => { setShowAddTxn(false); await onChanged(); }}
         />
       )}
@@ -384,67 +394,124 @@ function EditEpcForm({ epc, onSaved, onDeleted }: { epc: Epc; onSaved: () => Pro
 }
 
 function AddTxnForm({
-  epcId, epcName, customers, onAdded,
+  epcId, epcName, customers, items, onAdded,
 }: {
   epcId: string;
   epcName: string;
   customers: string[];
+  items: InventoryItem[];
   onAdded: () => Promise<void>;
 }) {
   const [v, setV] = useState({
-    customer: '', pmat: '', pbase: '', ppct: 5, pinv: '', smat: '', sbase: '', spct: 5, sinv: '',
+    customer: '', purchaseItemId: '', pqty: '', ppct: 5, pinv: '',
+    saleItemId: '', sqty: '', sbasePerUnit: '', spct: 5, sinv: '',
+    expCat: 'Transport', expAmt: '',
   });
+  const [busy, setBusy] = useState(false);
   const s = (k: keyof typeof v, val: string | number) => setV((p) => ({ ...p, [k]: val }));
-  const pg = (num(v.pbase) * v.ppct) / 100;
-  const sg = (num(v.sbase) * v.spct) / 100;
+
+  const purchaseItem = items.find((i) => i.id === v.purchaseItemId);
+  const pbase = num(v.pqty) * num(purchaseItem?.unit_cost); // auto from inventory cost × qty
+  const pg = (pbase * v.ppct) / 100;
+
+  const saleItem = items.find((i) => i.id === v.saleItemId);
+  const sbase = num(v.sqty) * num(v.sbasePerUnit); // total sale = qty × per-unit
+  const sg = (sbase * v.spct) / 100;
+
+  const submit = async () => {
+    setBusy(true);
+    const row = await createEpcTransaction({
+      epc_id: epcId,
+      customer_name: v.customer,
+      purchase_material: purchaseItem?.name || '',
+      purchase_base: pbase,
+      purchase_gst_pct: v.ppct,
+      purchase_invoice_no: v.pinv,
+      sale_material: saleItem?.name || '',
+      sale_base: sbase,
+      sale_gst_pct: v.spct,
+      sale_invoice_no: v.sinv,
+      sale_item_id: v.saleItemId || null,
+      sale_quantity: num(v.sqty),
+    });
+    // Sale → auto Stock Out in inventory (linked back to this EPC entry)
+    if (row && v.saleItemId && num(v.sqty) > 0) {
+      await createInventoryMovement({
+        item_id: v.saleItemId,
+        type: 'out',
+        quantity: num(v.sqty),
+        base_amount: sbase,
+        gst_pct: v.spct,
+        party: v.customer || epcName,
+        reference: `EPC: ${epcName}${v.sinv ? ` · ${v.sinv}` : ''}`,
+        source: 'epc_sale',
+        source_ref: row.id,
+        movement_date: todayISO(),
+      });
+    }
+    // Sale-side expense (transport/labour/…) → tracked expense, used in gross profit
+    if (row && num(v.expAmt) > 0) {
+      await createInventoryExpense({
+        category: v.expCat,
+        description: `EPC sale: ${epcName}${v.customer ? ` · ${v.customer}` : ''}`,
+        amount: num(v.expAmt),
+        expense_date: todayISO(),
+        source: 'epc_sale',
+        source_ref: row.id,
+      });
+    }
+    await logActivity({
+      action: `EPC entry added (${epcName})`,
+      entity_type: 'installment',
+      details: `Purchase ${formatCurrency(pbase)} / Sale ${formatCurrency(sbase)}`,
+    });
+    setBusy(false);
+    await onAdded();
+  };
+
   return (
     <div className="ve-card space-y-2">
       <Labeled label="Customer Name">
         <input className="ve-input" list="epc-cust" value={v.customer} onChange={(e) => s('customer', e.target.value)} placeholder="Select or type a customer…" />
         <datalist id="epc-cust">{customers.map((c) => <option key={c} value={c} />)}</datalist>
       </Labeled>
-      <div className="font-semibold text-sm">Purchase (Voltedge buys)</div>
-      <div className="grid grid-cols-4 gap-2">
-        <input className="ve-input" placeholder="Purchase Material" value={v.pmat} onChange={(e) => s('pmat', e.target.value)} />
-        <input className="ve-input" type="number" placeholder="Purchase Base (₹)" value={v.pbase} onChange={(e) => s('pbase', e.target.value)} />
+
+      <div className="font-semibold text-sm">Purchase (Voltedge buys) — base auto-calculated from stock cost × qty</div>
+      <div className="grid grid-cols-5 gap-2">
+        <select className="ve-input" value={v.purchaseItemId} onChange={(e) => s('purchaseItemId', e.target.value)}>
+          <option value="">— Material (from stock) —</option>
+          {items.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
+        </select>
+        <input className="ve-input" type="number" placeholder="Qty" value={v.pqty} onChange={(e) => s('pqty', e.target.value)} />
+        <input className="ve-input" value={formatCurrency(pbase)} disabled title="Purchase base = qty × stock unit cost" />
         <select className="ve-input" value={v.ppct} onChange={(e) => s('ppct', Number(e.target.value))}>{GST_OPTS.map((g) => <option key={g} value={g}>{g}%</option>)}</select>
         <input className="ve-input" placeholder="Purchase Invoice No" value={v.pinv} onChange={(e) => s('pinv', e.target.value)} />
       </div>
-      <div className="font-semibold text-sm">Sale (Voltedge sells to EPC)</div>
-      <div className="grid grid-cols-4 gap-2">
-        <input className="ve-input" placeholder="Sale Material" value={v.smat} onChange={(e) => s('smat', e.target.value)} />
-        <input className="ve-input" type="number" placeholder="Sale Base (₹)" value={v.sbase} onChange={(e) => s('sbase', e.target.value)} />
+      {purchaseItem && <div className="text-slate-500 text-[0.7rem]">Stock cost {formatCurrency(num(purchaseItem.unit_cost))}/{purchaseItem.unit} × {v.pqty || 0} = base {formatCurrency(pbase)}</div>}
+
+      <div className="font-semibold text-sm">Sale (Voltedge sells to EPC) — reduces stock</div>
+      <div className="grid grid-cols-5 gap-2">
+        <select className="ve-input" value={v.saleItemId} onChange={(e) => s('saleItemId', e.target.value)}>
+          <option value="">— Item (from stock) —</option>
+          {items.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
+        </select>
+        <input className="ve-input" type="number" placeholder="Qty" value={v.sqty} onChange={(e) => s('sqty', e.target.value)} />
+        <input className="ve-input" type="number" placeholder="Sale Base / Unit (₹)" value={v.sbasePerUnit} onChange={(e) => s('sbasePerUnit', e.target.value)} />
         <select className="ve-input" value={v.spct} onChange={(e) => s('spct', Number(e.target.value))}>{GST_OPTS.map((g) => <option key={g} value={g}>{g}%</option>)}</select>
         <input className="ve-input" placeholder="Sale Invoice No" value={v.sinv} onChange={(e) => s('sinv', e.target.value)} />
       </div>
-      <div className="text-slate-500 text-xs">
-        Total Purchase {formatCurrency(num(v.pbase) + pg)} · Total Sale {formatCurrency(num(v.sbase) + sg)} · GST diff {formatCurrency(sg - pg)}
+      {saleItem && <div className="text-slate-500 text-[0.7rem]">Sale total {v.sqty || 0} × {formatCurrency(num(v.sbasePerUnit))} = {formatCurrency(sbase)} · Stock Out of {v.sqty || 0} {saleItem.unit} will be recorded.</div>}
+
+      <div className="font-semibold text-sm">Sale Expense (transport / labour / …)</div>
+      <div className="grid grid-cols-2 gap-2">
+        <select className="ve-input" value={v.expCat} onChange={(e) => s('expCat', e.target.value)}>{EXPENSE_CATS.map((c) => <option key={c}>{c}</option>)}</select>
+        <input className="ve-input" type="number" placeholder="Expense Amount (₹)" value={v.expAmt} onChange={(e) => s('expAmt', e.target.value)} />
       </div>
-      <button
-        className="ve-btn ve-btn-primary w-full"
-        onClick={async () => {
-          await createEpcTransaction({
-            epc_id: epcId,
-            customer_name: v.customer,
-            purchase_material: v.pmat,
-            purchase_base: num(v.pbase),
-            purchase_gst_pct: v.ppct,
-            purchase_invoice_no: v.pinv,
-            sale_material: v.smat,
-            sale_base: num(v.sbase),
-            sale_gst_pct: v.spct,
-            sale_invoice_no: v.sinv,
-          });
-          await logActivity({
-            action: `EPC entry added (${epcName})`,
-            entity_type: 'installment',
-            details: `Purchase ${formatCurrency(num(v.pbase))} / Sale ${formatCurrency(num(v.sbase))}`,
-          });
-          await onAdded();
-        }}
-      >
-        ➕ Add Entry
-      </button>
+
+      <div className="text-slate-500 text-xs">
+        Total Purchase {formatCurrency(pbase + pg)} · Total Sale {formatCurrency(sbase + sg)} · GST diff {formatCurrency(sg - pg)}
+      </div>
+      <button className="ve-btn ve-btn-primary w-full" disabled={busy} onClick={submit}>➕ Add Entry</button>
     </div>
   );
 }

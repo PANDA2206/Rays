@@ -142,6 +142,8 @@ CREATE TABLE IF NOT EXISTS public.epc_transactions (
   sale_base           DECIMAL(15, 2) DEFAULT 0,
   sale_gst_pct        DECIMAL(5, 2)  DEFAULT 0,
   sale_invoice_no     TEXT,
+  sale_item_id        UUID,
+  sale_quantity       DECIMAL(15, 2) DEFAULT 0,
   created_at          TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
@@ -166,6 +168,51 @@ ALTER TABLE public.project_notes     DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.epcs              DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.epc_transactions  DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.epc_project_fees  DISABLE ROW LEVEL SECURITY;
+
+-- ── Inventory ───────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS public.inventory_items (
+  id            UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  name          TEXT NOT NULL,
+  category      TEXT,
+  unit          TEXT DEFAULT 'pcs',
+  unit_cost     DECIMAL(15, 2) DEFAULT 0,
+  reorder_level DECIMAL(15, 2) DEFAULT 0,
+  created_at    TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.inventory_movements (
+  id            UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  item_id       UUID REFERENCES public.inventory_items(id) ON DELETE CASCADE,
+  type          TEXT NOT NULL,
+  quantity      DECIMAL(15, 2) DEFAULT 0,
+  unit_price    DECIMAL(15, 2) DEFAULT 0,
+  base_amount   DECIMAL(15, 2) DEFAULT 0,
+  gst_pct       DECIMAL(5, 2)  DEFAULT 0,
+  expense       DECIMAL(15, 2) DEFAULT 0,
+  source        TEXT,
+  source_ref    TEXT,
+  party         TEXT,
+  reference     TEXT,
+  note          TEXT,
+  movement_date DATE,
+  created_at    TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.inventory_expenses (
+  id           UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  category     TEXT,
+  description  TEXT,
+  amount       DECIMAL(15, 2) DEFAULT 0,
+  tax          DECIMAL(15, 2) DEFAULT 0,
+  expense_date DATE,
+  source       TEXT,
+  source_ref   TEXT,
+  created_at   TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+ALTER TABLE public.inventory_items     DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.inventory_movements DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.inventory_expenses  DISABLE ROW LEVEL SECURITY;
 
 -- ── Helpful indexes ─────────────────────────────────────────────────────────
 CREATE INDEX IF NOT EXISTS idx_projects_status      ON public.projects(project_status);

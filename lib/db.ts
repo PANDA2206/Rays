@@ -11,6 +11,9 @@ import type {
   Epc,
   EpcTransaction,
   EpcProjectFee,
+  InventoryItem,
+  InventoryMovement,
+  InventoryExpense,
 } from './types';
 
 const DEFAULT_STEPS: [number, string][] = [
@@ -316,8 +319,9 @@ export async function createEpc(data: Partial<Epc>): Promise<Epc | null> {
   return rows?.[0] ?? null;
 }
 
-export async function createEpcTransaction(data: Partial<EpcTransaction>): Promise<void> {
-  await supabase.from('epc_transactions').insert(data);
+export async function createEpcTransaction(data: Partial<EpcTransaction>): Promise<EpcTransaction | null> {
+  const { data: rows } = await supabase.from('epc_transactions').insert(data).select();
+  return (rows?.[0] as EpcTransaction) ?? null;
 }
 
 export async function updateEpc(id: string, data: Partial<Epc>): Promise<void> {
@@ -329,6 +333,9 @@ export async function deleteEpc(id: string): Promise<void> {
 }
 
 export async function deleteEpcTransaction(id: string): Promise<void> {
+  // also remove any inventory stock-out + expense this sale generated
+  await supabase.from('inventory_movements').delete().eq('source', 'epc_sale').eq('source_ref', id);
+  await supabase.from('inventory_expenses').delete().eq('source', 'epc_sale').eq('source_ref', id);
   await supabase.from('epc_transactions').delete().eq('id', id);
 }
 
@@ -355,6 +362,60 @@ export async function deleteEpcProjectFee(id: string): Promise<void> {
 export async function deleteProject(id: string, name?: string | null): Promise<void> {
   await supabase.from('projects').delete().eq('id', id);
   await logActivity({ action: 'Deleted project', entity_type: 'project', project_id: id, project_name: name ?? null });
+}
+
+// ── Inventory ────────────────────────────────────────────────────────────────
+
+export async function getInventoryItems(): Promise<InventoryItem[]> {
+  const { data } = await supabase.from('inventory_items').select('*').order('name', { ascending: true });
+  return (data ?? []) as InventoryItem[];
+}
+
+export async function createInventoryItem(data: Partial<InventoryItem>): Promise<InventoryItem | null> {
+  const { data: rows } = await supabase.from('inventory_items').insert(data).select();
+  return (rows?.[0] as InventoryItem) ?? null;
+}
+
+export async function updateInventoryItem(id: string, data: Partial<InventoryItem>): Promise<void> {
+  await supabase.from('inventory_items').update(data).eq('id', id);
+}
+
+export async function deleteInventoryItem(id: string): Promise<void> {
+  await supabase.from('inventory_items').delete().eq('id', id);
+}
+
+export async function getInventoryMovements(): Promise<InventoryMovement[]> {
+  const { data } = await supabase
+    .from('inventory_movements')
+    .select('*')
+    .order('movement_date', { ascending: false })
+    .order('created_at', { ascending: false });
+  return (data ?? []) as InventoryMovement[];
+}
+
+export async function createInventoryMovement(data: Partial<InventoryMovement>): Promise<void> {
+  await supabase.from('inventory_movements').insert(data);
+}
+
+export async function deleteInventoryMovement(id: string): Promise<void> {
+  await supabase.from('inventory_movements').delete().eq('id', id);
+}
+
+export async function getInventoryExpenses(): Promise<InventoryExpense[]> {
+  const { data } = await supabase
+    .from('inventory_expenses')
+    .select('*')
+    .order('expense_date', { ascending: false })
+    .order('created_at', { ascending: false });
+  return (data ?? []) as InventoryExpense[];
+}
+
+export async function createInventoryExpense(data: Partial<InventoryExpense>): Promise<void> {
+  await supabase.from('inventory_expenses').insert(data);
+}
+
+export async function deleteInventoryExpense(id: string): Promise<void> {
+  await supabase.from('inventory_expenses').delete().eq('id', id);
 }
 
 export async function ensureVoltedgeEpc(epcs: Epc[]): Promise<void> {
