@@ -158,6 +158,34 @@ export interface EpcProjectFee {
   created_at?: string | null;
 }
 
+// ── Quotations ───────────────────────────────────────────────────────────────
+
+/** One row of a quotation's bill of materials. */
+export interface QuotationLine {
+  /** Section number I-VI. Groups the row under a heading — see SR_GROUPS. */
+  sr: string;
+  item: string;
+  spec: string;
+  make: string;
+  qty: string;   // free text: "9/10", "As Required", "1"
+  unit: string;
+  /** Our per-unit cost, typed in when the item is not carried in inventory.
+   *  Internal only — used to total up the kit, never printed for the customer. */
+  rate?: string;
+}
+
+/** The standard bill of materials for one system shape (phase + kW band).
+ *  Templates are stored; generated quotations are not. */
+export interface QuotationTemplate {
+  id: string;
+  name: string;
+  phase: '1ph' | '3ph' | string;
+  min_kw?: number | null;
+  max_kw?: number | null;
+  lines: QuotationLine[];
+  created_at?: string | null;
+}
+
 // ── Firms ───────────────────────────────────────────────────────────────────
 
 /** A legal entity work is booked under. Records never mix across firms. */

@@ -16,6 +16,7 @@ import type {
   InventoryItemStock,
   InventoryMovement,
   InventoryExpense,
+  QuotationTemplate,
 } from './types';
 
 // Meter Testing runs at #6, ahead of fabrication/installation; the three steps it
@@ -529,6 +530,38 @@ export async function ensureInHouseEpc(
   } catch {
     // ignore
   }
+}
+
+// ── Quotation templates ──────────────────────────────────────────────────────
+//
+// Only templates are stored. A generated quotation is composed in the browser
+// and printed to PDF, so it never touches the database.
+
+export async function getQuotationTemplates(): Promise<QuotationTemplate[]> {
+  const { data } = await supabase
+    .from('quotation_templates')
+    .select('*')
+    .order('phase', { ascending: true })
+    .order('min_kw', { ascending: true });
+  return (data ?? []) as QuotationTemplate[];
+}
+
+export async function saveQuotationTemplate(
+  id: string,
+  data: Partial<QuotationTemplate>
+): Promise<void> {
+  await supabase.from('quotation_templates').update(data).eq('id', id);
+}
+
+export async function createQuotationTemplate(
+  data: Partial<QuotationTemplate>
+): Promise<QuotationTemplate | null> {
+  const { data: rows } = await supabase.from('quotation_templates').insert(data).select();
+  return (rows?.[0] as QuotationTemplate) ?? null;
+}
+
+export async function deleteQuotationTemplate(id: string): Promise<void> {
+  await supabase.from('quotation_templates').delete().eq('id', id);
 }
 
 // ── Firms ────────────────────────────────────────────────────────────────────

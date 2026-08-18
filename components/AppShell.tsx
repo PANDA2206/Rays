@@ -26,6 +26,7 @@ const NAV: NavItem[] = [
   { label: 'Users', icon: '👤', href: '/users', adminOnly: true },
   { label: 'Settings', icon: '⚙️', href: '/settings' },
   { label: 'Inventory', icon: '📦', href: '/inventory' }, // NAV[7]
+  { label: 'Quotation', icon: '🧾', href: '/quotation' }, // NAV[8]
 ];
 
 /**
@@ -86,7 +87,7 @@ function Sidebar() {
 
   return (
     <aside
-      className="hidden md:flex flex-col w-[260px] shrink-0 h-screen sticky top-0 px-3 py-4"
+      className="app-chrome hidden md:flex flex-col w-[260px] shrink-0 h-screen sticky top-0 px-3 py-4"
       style={{ background: '#0a1322', borderRight: '1px solid #1e293b' }}
     >
       <div className="px-1 pb-4 text-center">
@@ -112,6 +113,7 @@ function Sidebar() {
 
         <div className="h-2" />
         <NavLink item={NAV[7]} active={isActive('/inventory')} />
+        <NavLink item={NAV[8]} active={isActive('/quotation')} />
 
         {isAdmin && (
           <>
@@ -181,7 +183,7 @@ function Header() {
   const { identity, employeeCode, role, signOut } = useAuth();
   const roleBadge = role === 'admin' ? '🔴 Admin' : '🟡 Employee';
   return (
-    <div className="flex items-center justify-between mb-4 pb-3" style={{ borderBottom: '1px solid #1e293b' }}>
+    <div className="app-chrome flex items-center justify-between mb-4 pb-3" style={{ borderBottom: '1px solid #1e293b' }}>
       <div className="flex items-center gap-3">
         {identity?.picture && (
           // eslint-disable-next-line @next/next/no-img-element
