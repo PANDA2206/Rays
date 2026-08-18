@@ -1,6 +1,9 @@
 'use client';
 
-import { STATUS_COLORS, STATUS_LABELS } from '@/lib/format';
+import { STATUS_COLORS, STATUS_LABELS, itemLabel } from '@/lib/format';
+import type { InventoryItemStock } from '@/lib/types';
+
+const UNCATEGORISED = 'Uncategorised';
 
 export function StatCard({
   icon,
@@ -64,5 +67,43 @@ export function Spinner({ label = 'Loading…' }: { label?: string }) {
       <div className="text-3xl mb-2 animate-pulse">⚡</div>
       {label}
     </div>
+  );
+}
+
+/**
+ * The <option> list for any inventory item / material picker, grouped into
+ * <optgroup>s by category so batches are classified while you choose. Items
+ * arrive already sorted (product name, then oldest purchase first), and each is
+ * labelled "name · rate · qty · date" so same-product batches stay distinct.
+ *
+ * Shared by Stock In, Stock Out and both EPC material pickers so every picker
+ * classifies the same way.
+ */
+export function ItemOptions({ items }: { items: InventoryItemStock[] }) {
+  const groups = new Map<string, InventoryItemStock[]>();
+  for (const it of items) {
+    const key = it.category?.trim() || UNCATEGORISED;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(it);
+  }
+  // named categories A→Z, with the catch-all pinned last
+  const names = [...groups.keys()].sort((a, b) => {
+    if (a === UNCATEGORISED) return 1;
+    if (b === UNCATEGORISED) return -1;
+    return a.localeCompare(b);
+  });
+
+  return (
+    <>
+      {names.map((cat) => (
+        <optgroup key={cat} label={cat}>
+          {groups.get(cat)!.map((i) => (
+            <option key={i.id} value={i.id}>
+              {itemLabel(i)}
+            </option>
+          ))}
+        </optgroup>
+      ))}
+    </>
   );
 }

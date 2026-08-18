@@ -69,6 +69,46 @@ export const STATUS_LABELS: Record<string, string> = {
   cancelled: 'Cancelled',
 };
 
+/** The date a stock batch was bought, as YYYY-MM-DD. Falls back to when the
+ *  item row was created, for items added before purchase_date existed. */
+export function itemDate(it: { purchase_date?: string | null; created_at?: string | null }): string {
+  const d = it.purchase_date || it.created_at || '';
+  return String(d).slice(0, 10);
+}
+
+/**
+ * How an inventory item is named everywhere it is picked or listed:
+ *
+ *   ACDB · ₹400 · 30 pcs · 2026-08-18
+ *   ACDB · ₹500 · 20 pcs · 2026-08-15
+ *
+ * The same product bought twice at different rates is two batches. Rate, the
+ * quantity still on hand, and the date it was bought are what tell them apart —
+ * so all three travel with the name into every dropdown, table and saved EPC
+ * entry, and you can see exactly which batch you are selling from.
+ *
+ * `qty` is the remaining stock; omit it where movement data is not loaded and
+ * the label falls back to showing just the unit.
+ */
+export function itemLabel(it: {
+  name: string;
+  unit?: string | null;
+  unit_cost?: number | null;
+  qty?: number | null;
+  purchase_date?: string | null;
+  created_at?: string | null;
+}): string {
+  const parts = [it.name, formatCurrency(Number(it.unit_cost || 0))];
+  if (it.qty !== undefined && it.qty !== null) {
+    parts.push(`${Number(it.qty)}${it.unit ? ` ${it.unit}` : ''}`);
+  } else if (it.unit) {
+    parts.push(String(it.unit));
+  }
+  const d = itemDate(it);
+  if (d) parts.push(d);
+  return parts.join(' · ');
+}
+
 /** EPC display id, e.g. EPC-1A2B3C4D */
 export function epcDisplayId(p: { project_code?: string | null; id: string }): string {
   return p.project_code || `EPC-${p.id.slice(0, 8).toUpperCase()}`;

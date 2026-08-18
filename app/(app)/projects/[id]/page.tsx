@@ -17,6 +17,10 @@ import {
   updateDoc,
   addInstallment,
   updateInstallment,
+  deleteInstallment,
+  recalcProjectFinancials,
+  sumPaid,
+  countableInstallments,
   addProjectNote,
   deleteProjectNote,
   deleteProject,
@@ -34,7 +38,9 @@ import type {
 import { formatCurrency, num } from '@/lib/format';
 import { Spinner } from '@/components/ui';
 
-const STEP_ICONS = ['📐', '📋', '🖥️', '🏦', '🏛️', '🔧', '⚡', '📑', '🧪', '🌐', '🔌', '⚙️', '🎁', '📦'];
+// Indexed by position, so this order must track DEFAULT_STEPS in lib/db.ts
+// (🧪 Meter Testing sits at #6, ahead of 🔧 fabrication and ⚡ installation).
+const STEP_ICONS = ['📐', '📋', '🖥️', '🏦', '🏛️', '🧪', '🔧', '⚡', '📑', '🌐', '🔌', '⚙️', '🎁', '📦'];
 
 const fmtDate = (v?: string | null) => {
   if (!v) return '-';
@@ -168,7 +174,7 @@ export default function ProjectDetailPage() {
 
       {/* bottom grid */}
       <div className="grid lg:grid-cols-[2.1fr_1.2fr_1.2fr] gap-3">
-        <Financials project={project} installments={insts} onSaved={load} />
+        <Financials project={project} installments={insts} isAdmin={isAdmin} onSaved={load} />
         <div className="space-y-3">
           <Documents docs={docs} project={project} onSaved={load} />
           <InternalNotes notes={notes} project={project} onSaved={load} />
@@ -277,46 +283,24 @@ function SubsidyCard({ project, onSaved }: { project: Project; onSaved: () => Pr
   const [applied, setApplied] = useState(!!project.subsidy_applied_date);
   const [disb, setDisb] = useState(isDisb);
 
+  // Subsidy is tracked for information only. The government pays it directly to
+  // the customer, so it is never money we received — recording it must not touch
+  // amount_paid, balance, or create an installment.
   const save = async () => {
     const today = new Date().toISOString().slice(0, 10);
     const payload: Partial<Project> = { subsidy_amount: num(amt) };
     if (applied) payload.subsidy_applied_date = project.subsidy_applied_date || today;
 
     if (disb) {
-      const dd = project.subsidy_disbursed_date || today;
       payload.subsidy_status = 'disbursed';
-      payload.subsidy_disbursed_date = dd;
-
-      // Post the subsidy as a PAID installment so it counts toward "Received"
-      // (just like choosing "Subsidy" in Add Payment). Reuse an existing subsidy
-      // installment if there is one, so it never double-counts.
-      const existing = await getInstallments(project.id);
-      const subs = existing.filter((i) => (i.payment_type || '').toLowerCase() === 'subsidy');
-      if (subs.length) {
-        await updateInstallment(subs[0].id, { amount: num(amt), due_date: dd, status: 'paid' });
-      } else if (num(amt) > 0) {
-        const nextNo = Math.max(0, ...existing.map((e) => e.installment_no ?? 0)) + 1;
-        await addInstallment({
-          project_id: project.id,
-          installment_no: nextNo,
-          amount: num(amt),
-          due_date: dd,
-          status: 'paid',
-          payment_type: 'Subsidy',
-        });
-      }
-      // recompute received + balance from all installments
-      const all = await getInstallments(project.id);
-      const received = all.reduce((s, i) => s + num(i.amount), 0);
-      payload.amount_paid = received;
-      payload.balance = num(project.total_cost) - received;
+      payload.subsidy_disbursed_date = project.subsidy_disbursed_date || today;
     } else {
       payload.subsidy_status = applied ? 'applied' : 'pending';
     }
 
     await updateProject(project.id, payload);
     await logActivity({
-      action: 'Subsidy updated' + (disb ? ' → disbursed (counted as received)' : ''),
+      action: 'Subsidy updated' + (disb ? ' → disbursed' : ''),
       entity_type: 'project',
       project_id: project.id,
       project_name: project.customer_name,
@@ -537,61 +521,236 @@ function StepUpdater({ steps, project, onSaved }: { steps: ProjectStep[]; projec
 }
 
 // ── Financials ────────────────────────────────────────────────────────────────
-function Financials({ project, installments, onSaved }: { project: Project; installments: Installment[]; onSaved: () => Promise<void> }) {
+const PAYMENT_TYPES = ['Advance Payment', 'Installment'];
+
+function Financials({
+  project,
+  installments,
+  isAdmin,
+  onSaved,
+}: {
+  project: Project;
+  installments: Installment[];
+  isAdmin: boolean;
+  onSaved: () => Promise<void>;
+}) {
   const total = num(project.total_cost);
-  const received = installments.reduce((s, i) => s + num(i.amount), 0);
+  // Subsidy rows are dropped entirely; of what remains, only paid rows count.
+  const rows = countableInstallments(installments);
+  const received = sumPaid(installments);
+  const pending = rows.filter((i) => (i.status || '').toLowerCase() !== 'paid');
+  const pendingSum = pending.reduce((s, i) => s + num(i.amount), 0);
   const due = total - received;
   const recPct = total ? Math.round((received / total) * 1000) / 10 : 0;
   const duePct = total ? Math.round((due / total) * 1000) / 10 : 0;
   const isLoan = (project.payment_mode || '').toUpperCase() === 'LOAN';
 
-  const [ptype, setPtype] = useState('Advance Payment');
+  const [ptype, setPtype] = useState(PAYMENT_TYPES[0]);
   const [amt, setAmt] = useState('');
   const [pdate, setPdate] = useState(new Date().toISOString().slice(0, 10));
+  const [busy, setBusy] = useState(false);
 
   const add = async () => {
     if (num(amt) <= 0) return;
+    setBusy(true);
     const existing = await getInstallments(project.id);
     const nextNo = Math.max(0, ...existing.map((e) => e.installment_no ?? 0)) + 1;
     await addInstallment({ project_id: project.id, installment_no: nextNo, amount: num(amt), due_date: pdate, status: 'paid', payment_type: ptype });
-    const newRecv = received + num(amt);
-    await updateProject(project.id, { amount_paid: newRecv, balance: total - newRecv });
+    await recalcProjectFinancials(project.id, total);
     await logActivity({ action: `Payment: ${ptype}`, entity_type: 'installment', project_id: project.id, project_name: project.customer_name, details: `${formatCurrency(num(amt))} · ${pdate}` });
     setAmt('');
+    setBusy(false);
     await onSaved();
   };
 
   return (
     <Card title="💰 FINANCIAL PROGRESS">
       <div className="grid grid-cols-2 gap-x-4">
-        <KV label="Total Project Cost" value={formatCurrency(total)} color="#3b82f6" />
+        <TotalCostField project={project} isAdmin={isAdmin} onSaved={onSaved} />
         <KV label="Received Amount" value={`${formatCurrency(received)} (${recPct}%)`} color="#22c55e" />
         <KV label="Due Amount" value={`${formatCurrency(due)} (${duePct}%)`} color="#ef4444" />
         <KV label="Payment Mode" value={isLoan ? `Loan · ${project.loan_status || '—'}` : 'Cash'} />
       </div>
-      {installments.length > 0 && (
+      {rows.length > 0 && (
         <div className="mt-2 pt-2" style={{ borderTop: '1px solid #16304d' }}>
           <div className="text-slate-500 text-[0.66rem] uppercase mb-1">Received breakdown</div>
-          {installments.map((i) => (
-            <div key={i.id} className="text-[0.72rem] text-slate-400 py-0.5">
-              <span className="text-slate-300">{i.payment_type || 'Installment'}</span> ·{' '}
-              <span className="text-green-400 font-semibold">{formatCurrency(num(i.amount))}</span> ·{' '}
-              <span className="text-slate-500">{fmtDate(i.due_date)}</span>
-            </div>
+          {rows.map((i) => (
+            <InstallmentRow key={i.id} inst={i} project={project} total={total} isAdmin={isAdmin} onSaved={onSaved} />
           ))}
+          {pendingSum > 0 && (
+            <div className="text-[0.66rem] text-slate-500 mt-1.5 pt-1.5" style={{ borderTop: '1px dashed #16304d' }}>
+              {pending.length} pending {pending.length === 1 ? 'installment' : 'installments'} totalling{' '}
+              <b style={{ color: '#f59e0b' }}>{formatCurrency(pendingSum)}</b> — not counted as received until marked paid.
+            </div>
+          )}
         </div>
       )}
       <Toggle label="➕ Add Payment / Installment">
         <div className="grid grid-cols-3 gap-2">
           <select className="ve-input" value={ptype} onChange={(e) => setPtype(e.target.value)}>
-            <option>Advance Payment</option><option>Installment</option><option>Subsidy</option>
+            {PAYMENT_TYPES.map((t) => <option key={t}>{t}</option>)}
           </select>
           <input className="ve-input" type="number" value={amt} onChange={(e) => setAmt(e.target.value)} placeholder="Amount (₹)" />
           <input className="ve-input" type="date" value={pdate} onChange={(e) => setPdate(e.target.value)} />
         </div>
-        <button className="ve-btn ve-btn-primary w-full" onClick={add}>💾 Add Payment</button>
+        <button className="ve-btn ve-btn-primary w-full" disabled={busy} onClick={add}>
+          {busy ? 'Saving…' : '💾 Add Payment'}
+        </button>
       </Toggle>
     </Card>
+  );
+}
+
+/** Total Project Cost — read-only for employees, inline-editable for admins.
+ *  Changing it re-derives Due from the installments that exist. */
+function TotalCostField({ project, isAdmin, onSaved }: { project: Project; isAdmin: boolean; onSaved: () => Promise<void> }) {
+  const total = num(project.total_cost);
+  const [editing, setEditing] = useState(false);
+  const [val, setVal] = useState(String(total));
+  const [busy, setBusy] = useState(false);
+
+  const save = async () => {
+    const next = num(val);
+    if (next < 0) return;
+    setBusy(true);
+    await updateProject(project.id, { total_cost: next });
+    await recalcProjectFinancials(project.id, next);
+    await logActivity({
+      action: 'Total project cost updated',
+      entity_type: 'project',
+      project_id: project.id,
+      project_name: project.customer_name,
+      details: `${formatCurrency(total)} → ${formatCurrency(next)}`,
+    });
+    setEditing(false);
+    setBusy(false);
+    await onSaved();
+  };
+
+  return (
+    <div className="mb-2">
+      <div className="text-slate-500 text-[0.68rem] uppercase tracking-wide">Total Project Cost</div>
+      {editing ? (
+        <div className="flex gap-1 mt-1">
+          <input className="ve-input py-1 text-sm" type="number" value={val} autoFocus onChange={(e) => setVal(e.target.value)} />
+          <button className="ve-btn ve-btn-primary px-2 py-1" disabled={busy} onClick={save}>{busy ? '…' : 'Save'}</button>
+          <button className="ve-btn px-2 py-1" disabled={busy} onClick={() => { setEditing(false); setVal(String(total)); }}>✕</button>
+        </div>
+      ) : (
+        <div className="flex items-center gap-2 mt-0.5">
+          <span className="font-semibold text-[0.9rem]" style={{ color: '#3b82f6' }}>{formatCurrency(total)}</span>
+          {isAdmin && (
+            <button className="text-slate-500 hover:text-slate-300 text-xs" onClick={() => setEditing(true)} title="Edit total project cost">✏️</button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** One row of the received breakdown. Admins can edit or delete it; either way
+ *  Received and Due are re-derived from what is left. */
+function InstallmentRow({
+  inst,
+  project,
+  total,
+  isAdmin,
+  onSaved,
+}: {
+  inst: Installment;
+  project: Project;
+  total: number;
+  isAdmin: boolean;
+  onSaved: () => Promise<void>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [v, setV] = useState({
+    payment_type: inst.payment_type || 'Installment',
+    amount: String(num(inst.amount)),
+    due_date: (inst.due_date || '').slice(0, 10),
+    status: (inst.status || 'paid').toLowerCase() === 'paid' ? 'paid' : 'pending',
+  });
+
+  const save = async () => {
+    setBusy(true);
+    await updateInstallment(inst.id, {
+      payment_type: v.payment_type,
+      amount: num(v.amount),
+      due_date: v.due_date || null,
+      status: v.status,
+    });
+    await recalcProjectFinancials(project.id, total);
+    await logActivity({
+      action: 'Payment edited',
+      entity_type: 'installment',
+      project_id: project.id,
+      project_name: project.customer_name,
+      details: `${formatCurrency(num(inst.amount))} → ${formatCurrency(num(v.amount))}`,
+    });
+    setEditing(false);
+    setBusy(false);
+    await onSaved();
+  };
+
+  const del = async () => {
+    setBusy(true);
+    await deleteInstallment(inst.id);
+    await recalcProjectFinancials(project.id, total);
+    await logActivity({
+      action: 'Payment deleted',
+      entity_type: 'installment',
+      project_id: project.id,
+      project_name: project.customer_name,
+      details: `${inst.payment_type || 'Installment'} · ${formatCurrency(num(inst.amount))}`,
+    });
+    setBusy(false);
+    await onSaved();
+  };
+
+  const isPaid = (inst.status || '').toLowerCase() === 'paid';
+
+  if (editing) {
+    return (
+      <div className="grid grid-cols-[1fr_1fr_1fr_0.8fr_auto_auto] gap-1 py-1 items-center">
+        <select className="ve-input py-1 text-xs" value={v.payment_type} onChange={(e) => setV((p) => ({ ...p, payment_type: e.target.value }))}>
+          {(PAYMENT_TYPES.includes(v.payment_type) ? PAYMENT_TYPES : [v.payment_type, ...PAYMENT_TYPES]).map((t) => (
+            <option key={t}>{t}</option>
+          ))}
+        </select>
+        <input className="ve-input py-1 text-xs" type="number" value={v.amount} onChange={(e) => setV((p) => ({ ...p, amount: e.target.value }))} />
+        <input className="ve-input py-1 text-xs" type="date" value={v.due_date} onChange={(e) => setV((p) => ({ ...p, due_date: e.target.value }))} />
+        <select className="ve-input py-1 text-xs" value={v.status} onChange={(e) => setV((p) => ({ ...p, status: e.target.value }))} title="Only paid counts as received">
+          <option value="paid">paid</option>
+          <option value="pending">pending</option>
+        </select>
+        <button className="ve-btn ve-btn-primary px-2 py-1 text-xs" disabled={busy} onClick={save}>{busy ? '…' : 'Save'}</button>
+        <button className="ve-btn px-2 py-1 text-xs" disabled={busy} onClick={() => setEditing(false)}>✕</button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="text-[0.72rem] text-slate-400 py-0.5 flex items-center gap-1.5">
+      <span className="text-slate-300">{inst.payment_type || 'Installment'}</span> ·{' '}
+      <span className="font-semibold" style={{ color: isPaid ? '#4ade80' : '#f59e0b' }}>{formatCurrency(num(inst.amount))}</span> ·{' '}
+      <span className="text-slate-500">{fmtDate(inst.due_date)}</span>
+      {!isPaid && <span className="ve-badge" style={{ background: '#f59e0b22', color: '#f59e0b', fontSize: '0.6rem' }}>pending</span>}
+      {isAdmin && !confirming && (
+        <span className="ml-auto flex gap-1.5">
+          <button className="text-slate-600 hover:text-slate-300" onClick={() => setEditing(true)} title="Edit this payment">✏️</button>
+          <button className="text-slate-600 hover:text-red-400" onClick={() => setConfirming(true)} title="Delete this payment">🗑️</button>
+        </span>
+      )}
+      {isAdmin && confirming && (
+        <span className="ml-auto flex gap-1.5 items-center">
+          <span className="text-red-400">Delete?</span>
+          <button className="text-red-400 font-bold" disabled={busy} onClick={del}>Yes</button>
+          <button className="text-slate-400" disabled={busy} onClick={() => setConfirming(false)}>No</button>
+        </span>
+      )}
+    </div>
   );
 }
 

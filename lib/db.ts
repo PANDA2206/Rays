@@ -11,21 +11,26 @@ import type {
   Epc,
   EpcTransaction,
   EpcProjectFee,
+  Firm,
   InventoryItem,
+  InventoryItemStock,
   InventoryMovement,
   InventoryExpense,
 } from './types';
 
+// Meter Testing runs at #6, ahead of fabrication/installation; the three steps it
+// overtakes shift down to 7-9. Existing projects are renumbered by
+// supabase/migration_subsidy_and_steps.sql (keyed on step_name, so status/dates follow).
 const DEFAULT_STEPS: [number, string][] = [
   [1, 'Survey & Engineering'],
   [2, 'Document Collection'],
   [3, 'National Portal Application'],
   [4, 'Loan Approval'],
   [5, 'MSEDCL Application'],
-  [6, 'Structure Fabrication'],
-  [7, 'Electrical Installation'],
-  [8, 'Release Order Application'],
-  [9, 'Meter Testing'],
+  [6, 'Meter Testing'],
+  [7, 'Structure Fabrication'],
+  [8, 'Electrical Installation'],
+  [9, 'Release Order Application'],
   [10, 'National Portal Installation Details'],
   [11, 'Net Meter Installation'],
   [12, 'Project Commissioning'],
@@ -150,15 +155,57 @@ export async function getInstallments(projectId: string): Promise<Installment[]>
   return data ?? [];
 }
 
-export async function getAllInstallments(): Promise<
-  Pick<Installment, 'project_id' | 'due_date' | 'status' | 'amount'>[]
-> {
-  const { data } = await supabase.from('installments').select('project_id,due_date,status,amount');
-  return data ?? [];
+export async function getAllInstallments(): Promise<Installment[]> {
+  const { data } = await supabase.from('installments').select('*');
+  return (data ?? []) as Installment[];
 }
 
 export async function updateInstallment(id: string, data: Partial<Installment>): Promise<void> {
   await supabase.from('installments').update(data).eq('id', id);
+}
+
+export async function deleteInstallment(id: string): Promise<void> {
+  await supabase.from('installments').delete().eq('id', id);
+}
+
+/**
+ * Installment rows that represent customer money.
+ *
+ * Subsidy rows are excluded outright. The old build wrote a paid installment
+ * with payment_type='Subsidy' whenever a subsidy was marked disbursed, and
+ * those rows still sit in the database on existing projects. Filtering them
+ * here means subsidy is out of every calculation immediately, whether or not
+ * the cleanup migration has been run yet.
+ */
+export function countableInstallments(installments: Installment[]): Installment[] {
+  return installments.filter((i) => (i.payment_type || '').toLowerCase() !== 'subsidy');
+}
+
+/** Money actually in hand: only installments marked paid. A pending installment
+ *  is a promise, not a payment, so it must not reduce what is still due. */
+export function sumPaid(installments: Installment[]): number {
+  return countableInstallments(installments)
+    .filter((i) => (i.status || '').toLowerCase() === 'paid')
+    .reduce((s, i) => s + Number(i.amount || 0), 0);
+}
+
+/**
+ * Single source of truth for a project's money: re-derives amount_paid and
+ * balance from the installment rows that actually exist. Call after ANY
+ * installment add/edit/delete, or after the total cost changes.
+ *
+ * Subsidy is deliberately NOT part of this — it is paid to the customer by the
+ * government, never to us, so it must not inflate what we have received.
+ * Writes directly (not via updateProject) to avoid an activity-log entry for
+ * every recalculation.
+ */
+export async function recalcProjectFinancials(projectId: string, totalCost: number): Promise<number> {
+  const received = sumPaid(await getInstallments(projectId));
+  await supabase
+    .from('projects')
+    .update({ amount_paid: received, balance: totalCost - received })
+    .eq('id', projectId);
+  return received;
 }
 
 export async function addInstallment(row: Partial<Installment>): Promise<void> {
@@ -368,7 +415,39 @@ export async function deleteProject(id: string, name?: string | null): Promise<v
 
 export async function getInventoryItems(): Promise<InventoryItem[]> {
   const { data } = await supabase.from('inventory_items').select('*').order('name', { ascending: true });
-  return (data ?? []) as InventoryItem[];
+  const rows = (data ?? []) as InventoryItem[];
+  // Batches of the same product sit together, oldest purchase first. Sorted here
+  // rather than in the query so it still works before the v3 migration adds the column.
+  return rows.sort((a, b) => {
+    const n = (a.name || '').localeCompare(b.name || '');
+    if (n !== 0) return n;
+    return String(a.purchase_date || a.created_at || '').localeCompare(
+      String(b.purchase_date || b.created_at || '')
+    );
+  });
+}
+
+/**
+ * Items with their live quantities folded in (in − out), so a batch can be
+ * labelled with how much of it is actually left. Used anywhere an item is
+ * picked for sale or issue, not just on the inventory page.
+ */
+export async function getInventoryStock(): Promise<InventoryItemStock[]> {
+  const [items, moves] = await Promise.all([getInventoryItems(), getInventoryMovements()]);
+  return items.map((it) => {
+    const mv = moves.filter((m) => m.item_id === it.id);
+    const qtyIn = mv.filter((m) => m.type === 'in').reduce((s, m) => s + Number(m.quantity || 0), 0);
+    const qtyOut = mv.filter((m) => m.type === 'out').reduce((s, m) => s + Number(m.quantity || 0), 0);
+    const qty = qtyIn - qtyOut;
+    return {
+      ...it,
+      qtyIn,
+      qtyOut,
+      qty,
+      stockValue: qty * Number(it.unit_cost || 0),
+      low: qty <= Number(it.reorder_level || 0),
+    };
+  });
 }
 
 export async function createInventoryItem(data: Partial<InventoryItem>): Promise<InventoryItem | null> {
@@ -418,12 +497,43 @@ export async function deleteInventoryExpense(id: string): Promise<void> {
   await supabase.from('inventory_expenses').delete().eq('id', id);
 }
 
-export async function ensureVoltedgeEpc(epcs: Epc[]): Promise<void> {
-  if (!epcs.some((e) => (e.name || '').toLowerCase() === 'voltedge')) {
-    try {
-      await supabase.from('epcs').insert({ name: 'Voltedge', personal_amount: 0, gst_received: 0 });
-    } catch {
-      // ignore
-    }
+/** Marks the partner row that stands for "this firm did the work itself". */
+export const IN_HOUSE_SUFFIX = '(in-house)';
+
+export function isInHouse(epc: { name?: string | null }): boolean {
+  return (epc.name || '').toLowerCase().includes(IN_HOUSE_SUFFIX);
+}
+
+/**
+ * Give a firm its own in-house partner row if it hasn't got one.
+ *
+ * The name is derived from the firm, never hardcoded — each firm's in-house row
+ * must carry that firm's name, or opening the page under one firm would create
+ * another firm's row inside it.
+ */
+export async function ensureInHouseEpc(
+  epcs: Epc[],
+  firmId?: string | null,
+  firmName?: string | null
+): Promise<void> {
+  if (!firmId || !firmName) return;
+  const mine = epcs.filter((e) => e.firm_id === firmId);
+  if (mine.some(isInHouse)) return;
+  try {
+    await supabase.from('epcs').insert({
+      name: `${firmName} ${IN_HOUSE_SUFFIX}`,
+      personal_amount: 0,
+      gst_received: 0,
+      firm_id: firmId,
+    });
+  } catch {
+    // ignore
   }
+}
+
+// ── Firms ────────────────────────────────────────────────────────────────────
+
+export async function getFirms(): Promise<Firm[]> {
+  const { data } = await supabase.from('firms').select('*').order('name', { ascending: true });
+  return (data ?? []) as Firm[];
 }

@@ -3,6 +3,7 @@
 // Users (admin) — ported from the "Users" section of Home.py.
 
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { getAppUsers, updateAppUser, getActivityLogs } from '@/lib/db';
 import type { AppUser, ActivityLog } from '@/lib/types';
 import { timeAgo } from '@/lib/format';
@@ -149,23 +150,9 @@ export default function UsersPage() {
             <Metric label="Project Changes" value={projectActions} />
             <Metric label="Step Updates" value={stepActions} />
           </div>
-          <div className="ve-panel divide-y" style={{ borderColor: '#334155' }}>
+          <div className="ve-panel" style={{ borderColor: '#334155' }}>
             {filteredLogs.map((lg, i) => (
-              <div key={i} className="flex items-start gap-3 px-4 py-2.5" style={{ borderTop: i ? '1px solid #334155' : 'none' }}>
-                <span className="text-lg">{ICONS[lg.entity_type ?? ''] ?? '⚡'}</span>
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm">
-                    <span className="font-bold text-slate-100">{lg.user_name || 'Unknown'}</span>
-                    <span className="text-slate-400 text-xs ml-2">{lg.user_email}</span>
-                  </div>
-                  <div className="text-slate-300 text-sm">
-                    {lg.action}
-                    {lg.project_name ? ` · ${lg.project_name}` : ''}
-                  </div>
-                  {lg.details && <div className="text-slate-600 text-xs truncate">{lg.details}</div>}
-                </div>
-                <span className="text-slate-600 text-xs whitespace-nowrap">{timeAgo(lg.created_at)}</span>
-              </div>
+              <LogRow key={i} log={lg} first={i === 0} />
             ))}
           </div>
         </>
@@ -179,6 +166,53 @@ export default function UsersPage() {
 const ICONS: Record<string, string> = {
   project: '📁', step: '🔧', note: '📝', document: '📄', installment: '💳', user: '👤',
 };
+
+/**
+ * One activity entry. Entries recorded against a project open that project, so
+ * you can go straight from "who changed what" to the record they changed.
+ * Entries with no project behind them (EPC and user actions) stay inert rather
+ * than pretending to be clickable.
+ */
+function LogRow({ log, first }: { log: ActivityLog; first: boolean }) {
+  const router = useRouter();
+  const target = log.project_id ? `/projects/${log.project_id}` : null;
+
+  const body = (
+    <>
+      <span className="text-lg">{ICONS[log.entity_type ?? ''] ?? '⚡'}</span>
+      <div className="flex-1 min-w-0">
+        <div className="text-sm">
+          <span className="font-bold text-slate-100">{log.user_name || 'Unknown'}</span>
+          <span className="text-slate-400 text-xs ml-2">{log.user_email}</span>
+        </div>
+        <div className="text-slate-300 text-sm">
+          {log.action}
+          {log.project_name ? ` · ${log.project_name}` : ''}
+        </div>
+        {log.details && <div className="text-slate-600 text-xs truncate">{log.details}</div>}
+      </div>
+      <span className="text-slate-600 text-xs whitespace-nowrap">{timeAgo(log.created_at)}</span>
+      {target && <span className="text-slate-600 text-xs ml-1">›</span>}
+    </>
+  );
+
+  const border = { borderTop: first ? 'none' : '1px solid #334155' };
+
+  if (!target) {
+    return <div className="flex items-start gap-3 px-4 py-2.5" style={border}>{body}</div>;
+  }
+
+  return (
+    <button
+      onClick={() => router.push(target)}
+      className="flex items-start gap-3 px-4 py-2.5 w-full text-left hover:brightness-125 cursor-pointer"
+      style={border}
+      title={`Open ${log.project_name || 'this project'}`}
+    >
+      {body}
+    </button>
+  );
+}
 
 function Metric({ label, value }: { label: string; value: number }) {
   return (

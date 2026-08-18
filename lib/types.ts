@@ -10,6 +10,8 @@ export type ProjectStatus =
 
 export interface Project {
   id: string;
+  /** Owning firm. Inherited by installments, steps, documents and notes. */
+  firm_id?: string | null;
   project_code?: string | null;
   customer_name: string;
   mobile?: string | null;
@@ -118,6 +120,8 @@ export interface AppUser {
 
 export interface Epc {
   id: string;
+  /** Owning firm. Inherited by this EPC's transactions and project fees. */
+  firm_id?: string | null;
   name: string;
   mobile?: string | null;
   email?: string | null;
@@ -154,15 +158,28 @@ export interface EpcProjectFee {
   created_at?: string | null;
 }
 
+// ── Firms ───────────────────────────────────────────────────────────────────
+
+/** A legal entity work is booked under. Records never mix across firms. */
+export interface Firm {
+  id: string;
+  name: string;
+  created_at?: string | null;
+}
+
 // ── Inventory ────────────────────────────────────────────────────────────────
 
 export interface InventoryItem {
   id: string;
+  /** Owning firm. Inherited by this item's stock movements. */
+  firm_id?: string | null;
   name: string;
   category?: string | null;
   unit?: string | null;
   unit_cost?: number | null;
   reorder_level?: number | null;
+  /** Date this batch was bought. Distinguishes same-product/different-rate stock. */
+  purchase_date?: string | null;
   created_at?: string | null;
 }
 
@@ -188,6 +205,8 @@ export interface InventoryMovement {
 
 export interface InventoryExpense {
   id: string;
+  /** Owning firm. Standalone expenses have no parent to inherit from. */
+  firm_id?: string | null;
   category?: string | null;
   description?: string | null;
   amount?: number | null;

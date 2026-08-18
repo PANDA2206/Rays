@@ -7,18 +7,22 @@ import { useRouter } from 'next/navigation';
 import {
   getProjects,
   updateProject,
+  recalcProjectFinancials,
+  sumPaid,
   getInstallments,
   addInstallment,
   logActivity,
 } from '@/lib/db';
 import type { Project } from '@/lib/types';
 import { num } from '@/lib/format';
+import { useFirm } from '@/lib/firm';
 import { StatusBadge, Spinner } from '@/components/ui';
 
 const PAGE_SIZE = 20;
 
 export default function CustomerListPage() {
   const router = useRouter();
+  const { matches, firmId } = useFirm();
   const [loading, setLoading] = useState(true);
   const [projects, setProjects] = useState<Project[]>([]);
   const [search, setSearch] = useState('');
@@ -28,7 +32,7 @@ export default function CustomerListPage() {
   const [qePid, setQePid] = useState<string | null>(null);
 
   const reload = async () => {
-    setProjects(await getProjects());
+    setProjects((await getProjects()).filter(matches));
   };
 
   useEffect(() => {
@@ -36,7 +40,7 @@ export default function CustomerListPage() {
       await reload();
       setLoading(false);
     })();
-  }, []);
+  }, [firmId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const filtered = useMemo(() => {
     let rows = [...projects];
@@ -178,9 +182,7 @@ function QuickEdit({ project, onChanged }: { project: Project | null; onChanged:
   useEffect(() => {
     setNotes(String(project?.notes ?? ''));
     if (project) {
-      getInstallments(project.id).then((ins) =>
-        setPaid(ins.reduce((s, i) => s + num(i.amount), 0))
-      );
+      getInstallments(project.id).then((ins) => setPaid(sumPaid(ins)));
     }
   }, [project]);
 
@@ -221,8 +223,7 @@ function QuickEdit({ project, onChanged }: { project: Project | null; onChanged:
       status: 'paid',
       payment_type: payType,
     });
-    const newPaid = paid + amt;
-    await updateProject(project.id, { amount_paid: newPaid, balance: total - newPaid });
+    const newPaid = await recalcProjectFinancials(project.id, total);
     await logActivity({
       action: `Payment: ${payType}`,
       entity_type: 'installment',
@@ -272,7 +273,6 @@ function QuickEdit({ project, onChanged }: { project: Project | null; onChanged:
         <select className="ve-input" value={payType} onChange={(e) => setPayType(e.target.value)}>
           <option>Advance Payment</option>
           <option>Installment</option>
-          <option>Subsidy</option>
         </select>
         <input className="ve-input" type="number" placeholder="Amount (₹)" value={payAmt} onChange={(e) => setPayAmt(e.target.value)} />
       </div>

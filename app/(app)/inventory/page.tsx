@@ -23,9 +23,10 @@ import type {
   InventoryItemStock,
   InventoryExpense,
 } from '@/lib/types';
-import { formatCurrency, num } from '@/lib/format';
+import { formatCurrency, num, itemLabel, itemDate } from '@/lib/format';
 import { useAuth } from '@/lib/auth';
-import { StatCard, Spinner } from '@/components/ui';
+import { useFirm } from '@/lib/firm';
+import { StatCard, Spinner, ItemOptions } from '@/components/ui';
 import { HBars } from '@/components/Charts';
 
 const UNITS = ['pcs', 'm', 'kg', 'set', 'roll', 'L', 'box', 'unit'];
@@ -40,6 +41,7 @@ type Tab = 'item' | 'in' | 'out' | 'expense' | null;
 
 export default function InventoryPage() {
   const { isAdmin } = useAuth();
+  const { matches, firmId, firmName } = useFirm();
   const [loading, setLoading] = useState(true);
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [moves, setMoves] = useState<InventoryMovement[]>([]);
@@ -55,9 +57,9 @@ export default function InventoryPage() {
       getInventoryMovements(),
       getInventoryExpenses(),
     ]);
-    setItems(its);
+    setItems(its.filter(matches));
     setMoves(mvs);
-    setExpenses(exp);
+    setExpenses(exp.filter(matches));
   };
 
   useEffect(() => {
@@ -67,7 +69,7 @@ export default function InventoryPage() {
       setCustomers(Array.from(new Set(pr.map((p) => p.customer_name).filter(Boolean))).sort());
       setLoading(false);
     })();
-  }, []);
+  }, [firmId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const stock: InventoryItemStock[] = useMemo(() => {
     return items.map((it) => {
@@ -81,7 +83,14 @@ export default function InventoryPage() {
     });
   }, [items, moves]);
 
-  const itemById = useMemo(() => Object.fromEntries(items.map((i) => [i.id, i])), [items]);
+  // keyed off `stock`, not `items`, so every label carries its remaining quantity
+  const itemById = useMemo(() => Object.fromEntries(stock.map((i) => [i.id, i])), [stock]);
+
+  // categories already in use, offered when adding an item
+  const categories = useMemo(
+    () => Array.from(new Set(items.map((i) => i.category).filter(Boolean) as string[])).sort(),
+    [items]
+  );
 
   if (loading) return <Spinner />;
 
@@ -114,7 +123,8 @@ export default function InventoryPage() {
   type Detail = { date: string; kind: string; label: string; amount: number; color: string };
   const details: Detail[] = [];
   for (const m of fMoves) {
-    const nm = itemById[m.item_id]?.name || '—';
+    const src = itemById[m.item_id];
+    const nm = src ? itemLabel(src) : '—';
     if (m.type === 'out') details.push({ date: m.movement_date || '-', kind: 'Sale', label: `${nm}${m.party ? ` · ${m.party}` : ''}`, amount: moveValue(m), color: '#22c55e' });
     else details.push({ date: m.movement_date || '-', kind: 'Purchase', label: `${nm}${m.party ? ` · ${m.party}` : ''}`, amount: -moveValue(m), color: '#3b82f6' });
     if (num(m.expense) > 0) details.push({ date: m.movement_date || '-', kind: 'Expense', label: `${nm} transport/expense`, amount: -num(m.expense), color: '#f59e0b' });
@@ -139,7 +149,7 @@ export default function InventoryPage() {
   return (
     <div className="space-y-4">
       <div>
-        <div className="text-lg font-bold">📦 Inventory Management</div>
+        <div className="text-lg font-bold">📦 Inventory Management <span className="ve-badge ml-2 align-middle" style={{ background: '#16304d', color: '#93c5fd', fontWeight: 700 }}>{firmName}</span></div>
         <div className="text-slate-500 text-sm">
           Stock quantities, valuation, purchases, sales, expenses and gross profit.
         </div>
@@ -157,7 +167,7 @@ export default function InventoryPage() {
       {lowCount > 0 && (
         <div className="p-3 rounded-lg text-sm" style={{ background: '#450a0a', color: '#fca5a5' }}>
           ⚠️ {lowCount} item(s) at or below reorder level:{' '}
-          <b>{stock.filter((s) => s.low).map((s) => s.name).join(', ')}</b>
+          <b>{stock.filter((s) => s.low).map((s) => itemLabel(s)).join(', ')}</b>
         </div>
       )}
 
@@ -225,10 +235,10 @@ export default function InventoryPage() {
         <button className={`ve-btn ${tab === 'expense' ? 've-btn-primary' : ''}`} onClick={() => setTab(tab === 'expense' ? null : 'expense')}>🧾 Add Expense</button>
       </div>
 
-      {tab === 'item' && <AddItemForm onDone={async () => { setTab(null); await reload(); }} />}
-      {tab === 'in' && <StockInForm items={items} onDone={async () => { setTab(null); await reload(); }} />}
-      {tab === 'out' && <StockOutForm items={items} stock={stock} customers={customers} onDone={async () => { setTab(null); await reload(); }} />}
-      {tab === 'expense' && <AddExpenseForm onDone={async () => { setTab(null); await reload(); }} />}
+      {tab === 'item' && <AddItemForm categories={categories} firmId={firmId} onDone={async () => { setTab(null); await reload(); }} />}
+      {tab === 'in' && <StockInForm items={items} stock={stock} firmId={firmId} onDone={async () => { setTab(null); await reload(); }} />}
+      {tab === 'out' && <StockOutForm stock={stock} customers={customers} onDone={async () => { setTab(null); await reload(); }} />}
+      {tab === 'expense' && <AddExpenseForm firmId={firmId} onDone={async () => { setTab(null); await reload(); }} />}
 
       {/* stock table + category (category value chart is admin-only) */}
       <div className={`grid gap-4 ${isAdmin ? 'lg:grid-cols-[2.4fr_1fr]' : ''}`}>
@@ -241,7 +251,7 @@ export default function InventoryPage() {
               <table className="w-full text-[0.78rem]">
                 <thead>
                   <tr className="text-slate-500 text-left" style={{ background: '#0f1b2e' }}>
-                    {['Item', 'Category', 'Unit', 'In', 'Out', 'Remaining', 'Unit Cost', 'Stock Value', 'Status', ''].map((h) => (
+                    {['Item', 'Category', 'Unit', 'Date', 'In', 'Out', 'Remaining', 'Unit Cost', 'Stock Value', 'Status', ''].map((h) => (
                       <th key={h} className="px-2 py-2 font-bold whitespace-nowrap">{h}</th>
                     ))}
                   </tr>
@@ -252,6 +262,7 @@ export default function InventoryPage() {
                       <td className="px-2 py-1.5 font-semibold">{s.name}</td>
                       <td className="px-2 py-1.5 text-slate-400">{s.category || '-'}</td>
                       <td className="px-2 py-1.5 text-slate-400">{s.unit}</td>
+                      <td className="px-2 py-1.5 text-slate-400 whitespace-nowrap">{itemDate(s) || '-'}</td>
                       <td className="px-2 py-1.5 text-green-400">{s.qtyIn}</td>
                       <td className="px-2 py-1.5 text-orange-400">{s.qtyOut}</td>
                       <td className="px-2 py-1.5 font-bold" style={{ color: s.low ? '#ef4444' : '#f1f5f9' }}>{s.qty}</td>
@@ -334,7 +345,7 @@ export default function InventoryPage() {
                   return (
                     <tr key={m.id} style={{ borderTop: '1px solid #1e293b' }}>
                       <td className="px-2 py-1.5 text-slate-400">{m.movement_date || '-'}</td>
-                      <td className="px-2 py-1.5">{it?.name || '—'}</td>
+                      <td className="px-2 py-1.5 whitespace-nowrap">{it ? itemLabel(it) : '—'}</td>
                       <td className="px-2 py-1.5">
                         <span className="ve-badge" style={{ background: isIn ? '#16a34a' : '#f97316' }}>{isIn ? 'IN' : 'OUT'}</span>
                         {m.source === 'epc_sale' && <span className="ml-1 text-[0.6rem] text-violet-400">EPC</span>}
@@ -372,7 +383,49 @@ function GpFig({ label, value, color, sign, big }: { label: string; value: numbe
 
 // ── forms ─────────────────────────────────────────────────────────────────────
 
-function AddItemForm({ onDone }: { onDone: () => Promise<void> }) {
+/** Sentinel option value — picking it swaps the dropdown for a text field. */
+const NEW_CATEGORY = "__new_category__";
+
+/** Category chooser: pick an existing one, or "Add category" to type a new one. */
+function CategoryPicker({ value, categories, onChange }: { value: string; categories: string[]; onChange: (v: string) => void }) {
+  const [adding, setAdding] = useState(false);
+
+  if (adding) {
+    return (
+      <div className="flex gap-1">
+        <input
+          className="ve-input"
+          autoFocus
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="New category name"
+        />
+        <button className="ve-btn px-2" title="Pick from the list instead" onClick={() => { onChange(''); setAdding(false); }}>✕</button>
+      </div>
+    );
+  }
+
+  return (
+    <select
+      className="ve-input"
+      value={value}
+      onChange={(e) => {
+        if (e.target.value === NEW_CATEGORY) {
+          onChange('');
+          setAdding(true);
+        } else {
+          onChange(e.target.value);
+        }
+      }}
+    >
+      <option value="">— Select category —</option>
+      <option value={NEW_CATEGORY}>＋ Add category…</option>
+      {categories.map((c) => <option key={c} value={c}>{c}</option>)}
+    </select>
+  );
+}
+
+function AddItemForm({ categories, firmId, onDone }: { categories: string[]; firmId: string | null; onDone: () => Promise<void> }) {
   const [v, setV] = useState({ name: '', category: '', unit: 'pcs', unit_cost: '', reorder_level: '', opening_qty: '' });
   const [busy, setBusy] = useState(false);
   const s = (k: keyof typeof v, val: string) => setV((p) => ({ ...p, [k]: val }));
@@ -380,12 +433,17 @@ function AddItemForm({ onDone }: { onDone: () => Promise<void> }) {
   const submit = async () => {
     if (!v.name.trim()) return;
     setBusy(true);
+    // A new item is a batch bought today; later purchases at other rates open
+    // their own batches from the Stock In form.
+    const today = todayStr();
     const item = await createInventoryItem({
       name: v.name.trim(),
       category: v.category.trim() || null,
       unit: v.unit,
       unit_cost: num(v.unit_cost),
       reorder_level: num(v.reorder_level),
+      purchase_date: today,
+      firm_id: firmId,
     });
     if (item && num(v.opening_qty) > 0) {
       await createInventoryMovement({
@@ -396,30 +454,45 @@ function AddItemForm({ onDone }: { onDone: () => Promise<void> }) {
         unit_price: num(v.unit_cost),
         party: 'Opening stock',
         source: 'manual',
-        movement_date: todayStr(),
+        movement_date: today,
       });
     }
     setBusy(false);
     await onDone();
   };
 
+  // live preview of the name this batch will be known by everywhere
+  const preview = itemLabel({
+    name: v.name.trim() || 'Item name',
+    unit: v.unit,
+    unit_cost: num(v.unit_cost),
+    qty: num(v.opening_qty),
+    purchase_date: todayStr(),
+  });
+
   return (
     <div className="ve-card space-y-2">
       <div className="font-semibold text-sm">➕ Add Inventory Item</div>
       <div className="grid md:grid-cols-3 gap-2">
         <Labeled label="Item Name *"><input className="ve-input" value={v.name} onChange={(e) => s('name', e.target.value)} placeholder="e.g. Solar Panel 550W" /></Labeled>
-        <Labeled label="Category"><input className="ve-input" value={v.category} onChange={(e) => s('category', e.target.value)} placeholder="Panels / Cables / Structure…" /></Labeled>
+        <Labeled label="Category"><CategoryPicker value={v.category} categories={categories} onChange={(c) => s('category', c)} /></Labeled>
         <Labeled label="Unit"><select className="ve-input" value={v.unit} onChange={(e) => s('unit', e.target.value)}>{UNITS.map((u) => <option key={u}>{u}</option>)}</select></Labeled>
         <Labeled label="Unit Cost (₹)"><input className="ve-input" type="number" value={v.unit_cost} onChange={(e) => s('unit_cost', e.target.value)} placeholder="0" /></Labeled>
         <Labeled label="Reorder Level"><input className="ve-input" type="number" value={v.reorder_level} onChange={(e) => s('reorder_level', e.target.value)} placeholder="0" /></Labeled>
         <Labeled label="Opening Stock Qty (optional)"><input className="ve-input" type="number" value={v.opening_qty} onChange={(e) => s('opening_qty', e.target.value)} placeholder="0" /></Labeled>
+      </div>
+      <div className="text-slate-500 text-xs">
+        Will appear as <b className="text-slate-300">{preview}</b>
       </div>
       <button className="ve-btn ve-btn-primary w-full" disabled={busy} onClick={submit}>💾 Save Item</button>
     </div>
   );
 }
 
-function StockInForm({ items, onDone }: { items: InventoryItem[]; onDone: () => Promise<void> }) {
+/** Same rate to the paisa — anything closer than this is the same batch. */
+const SAME_RATE = 0.005;
+
+function StockInForm({ items, stock, firmId, onDone }: { items: InventoryItem[]; stock: InventoryItemStock[]; firmId: string | null; onDone: () => Promise<void> }) {
   const [v, setV] = useState({ item_id: '', quantity: '', basePerUnit: '', gst: '0', expense: '', party: '', reference: '', date: todayStr(), note: '' });
   const [busy, setBusy] = useState(false);
   const s = (k: keyof typeof v, val: string) => setV((p) => ({ ...p, [k]: val }));
@@ -430,11 +503,57 @@ function StockInForm({ items, onDone }: { items: InventoryItem[]; onDone: () => 
   const total = grossOf(base, gstPct);
   const landedPerUnit = qty > 0 ? total / qty : 0;
 
+  const selected = items.find((i) => i.id === v.item_id);
+  const selectedStock = stock.find((i) => i.id === v.item_id);
+
+  /**
+   * Where this stock should land.
+   *
+   * An item is one batch at one rate. Receiving at a different rate does not
+   * overwrite the old rate — it opens a new batch, so the earlier stock keeps
+   * the price it was actually bought at.
+   *
+   *  - no price entered, or the batch is still empty/unpriced → the selected item
+   *  - rate matches an existing batch of the same product      → that batch
+   *  - otherwise                                               → a new batch
+   */
+  const plan = (() => {
+    if (!selected || base <= 0) return { kind: 'same' as const };
+    const firstBuy = num(selected.unit_cost) === 0 || (selectedStock?.qtyIn ?? 0) === 0;
+    if (firstBuy) return { kind: 'price' as const };
+    if (Math.abs(landedPerUnit - num(selected.unit_cost)) <= SAME_RATE) return { kind: 'same' as const };
+    const twin = items.find(
+      (i) =>
+        i.id !== selected.id &&
+        i.name === selected.name &&
+        (i.unit || '') === (selected.unit || '') &&
+        Math.abs(num(i.unit_cost) - landedPerUnit) <= SAME_RATE
+    );
+    return twin ? { kind: 'twin' as const, twin } : { kind: 'new' as const };
+  })();
+
   const submit = async () => {
-    if (!v.item_id || qty <= 0) return;
+    if (!v.item_id || qty <= 0 || !selected) return;
     setBusy(true);
+
+    let targetId = v.item_id;
+    if (plan.kind === 'twin') {
+      targetId = plan.twin.id;
+    } else if (plan.kind === 'new') {
+      const batch = await createInventoryItem({
+        name: selected.name,
+        category: selected.category ?? null,
+        unit: selected.unit ?? null,
+        unit_cost: landedPerUnit,
+        reorder_level: num(selected.reorder_level),
+        purchase_date: v.date,
+        firm_id: selected.firm_id ?? firmId,
+      });
+      if (batch) targetId = batch.id;
+    }
+
     await createInventoryMovement({
-      item_id: v.item_id,
+      item_id: targetId,
       type: 'in',
       quantity: qty,
       base_amount: base,
@@ -447,7 +566,12 @@ function StockInForm({ items, onDone }: { items: InventoryItem[]; onDone: () => 
       source: 'manual',
       movement_date: v.date,
     });
-    if (base > 0) await updateInventoryItem(v.item_id, { unit_cost: landedPerUnit });
+
+    // First purchase of an unpriced batch: this is what it costs, and when.
+    if (plan.kind === 'price') {
+      await updateInventoryItem(v.item_id, { unit_cost: landedPerUnit, purchase_date: v.date });
+    }
+
     setBusy(false);
     await onDone();
   };
@@ -459,7 +583,7 @@ function StockInForm({ items, onDone }: { items: InventoryItem[]; onDone: () => 
         <Labeled label="Item *">
           <select className="ve-input" value={v.item_id} onChange={(e) => s('item_id', e.target.value)}>
             <option value="">— Select item —</option>
-            {items.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
+            <ItemOptions items={stock} />
           </select>
         </Labeled>
         <Labeled label="Quantity *"><input className="ve-input" type="number" value={v.quantity} onChange={(e) => s('quantity', e.target.value)} placeholder="0" /></Labeled>
@@ -475,12 +599,40 @@ function StockInForm({ items, onDone }: { items: InventoryItem[]; onDone: () => 
         {' '}· incl GST <b className="text-slate-300">{formatCurrency(total)}</b>
         {qty > 0 && <> · per-unit cost <b className="text-slate-300">{formatCurrency(landedPerUnit)}</b></>}
       </div>
-      <button className="ve-btn ve-btn-primary w-full" disabled={busy} onClick={submit}>📥 Add Stock</button>
+
+      {selected && base > 0 && (
+        <div
+          className="text-xs rounded-lg px-3 py-2"
+          style={
+            plan.kind === 'new'
+              ? { background: '#1c1708', border: '1px solid #a16207', color: '#fbbf24' }
+              : { background: '#0a1322', border: '1px solid #1e293b', color: '#94a3b8' }
+          }
+        >
+          {plan.kind === 'new' && (
+            <>🆕 Rate differs from this batch ({formatCurrency(num(selected.unit_cost))}) — a{' '}
+              <b>new batch</b> will be created at {formatCurrency(landedPerUnit)} dated {v.date}. The existing
+              stock keeps its old rate.</>
+          )}
+          {plan.kind === 'twin' && (
+            <>↩︎ Same rate as an existing batch — this stock will be added to{' '}
+              <b>{itemLabel(plan.twin)}</b> instead of the one selected.</>
+          )}
+          {plan.kind === 'same' && <>➕ Same rate — adds to the selected batch.</>}
+          {plan.kind === 'price' && (
+            <>💲 First purchase — this batch will be priced at {formatCurrency(landedPerUnit)}, dated {v.date}.</>
+          )}
+        </div>
+      )}
+
+      <button className="ve-btn ve-btn-primary w-full" disabled={busy} onClick={submit}>
+        {plan.kind === 'new' ? '📥 Add Stock as New Batch' : '📥 Add Stock'}
+      </button>
     </div>
   );
 }
 
-function StockOutForm({ items, stock, customers, onDone }: { items: InventoryItem[]; stock: InventoryItemStock[]; customers: string[]; onDone: () => Promise<void> }) {
+function StockOutForm({ stock, customers, onDone }: { stock: InventoryItemStock[]; customers: string[]; onDone: () => Promise<void> }) {
   const [v, setV] = useState({ item_id: '', quantity: '', base: '', gst: '0', expense: '', party: '', reference: '', date: todayStr(), note: '' });
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
@@ -517,7 +669,7 @@ function StockOutForm({ items, stock, customers, onDone }: { items: InventoryIte
         <Labeled label="Item *">
           <select className="ve-input" value={v.item_id} onChange={(e) => s('item_id', e.target.value)}>
             <option value="">— Select item —</option>
-            {items.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
+            <ItemOptions items={stock} />
           </select>
         </Labeled>
         <Labeled label={`Quantity * ${v.item_id ? `(avail ${avail})` : ''}`}><input className="ve-input" type="number" value={v.quantity} onChange={(e) => s('quantity', e.target.value)} placeholder="0" /></Labeled>
@@ -536,7 +688,7 @@ function StockOutForm({ items, stock, customers, onDone }: { items: InventoryIte
   );
 }
 
-function AddExpenseForm({ onDone }: { onDone: () => Promise<void> }) {
+function AddExpenseForm({ firmId, onDone }: { firmId: string | null; onDone: () => Promise<void> }) {
   const [v, setV] = useState({ category: 'Transport', description: '', amount: '', tax: '', date: todayStr() });
   const [busy, setBusy] = useState(false);
   const s = (k: keyof typeof v, val: string) => setV((p) => ({ ...p, [k]: val }));
@@ -550,6 +702,7 @@ function AddExpenseForm({ onDone }: { onDone: () => Promise<void> }) {
       amount: num(v.amount),
       tax: num(v.tax),
       expense_date: v.date,
+      firm_id: firmId,
     });
     setBusy(false);
     await onDone();
@@ -579,6 +732,7 @@ function EditItemButton({ item, onChanged }: { item: InventoryItem; onChanged: (
     category: item.category || '',
     unit_cost: String(num(item.unit_cost)),
     reorder_level: String(num(item.reorder_level)),
+    purchase_date: itemDate(item),
   });
   const s = (k: keyof typeof v, val: string) => setV((p) => ({ ...p, [k]: val }));
 
@@ -593,6 +747,7 @@ function EditItemButton({ item, onChanged }: { item: InventoryItem; onChanged: (
           <input className="ve-input" value={v.name} onChange={(e) => s('name', e.target.value)} placeholder="Name" />
           <input className="ve-input" value={v.category} onChange={(e) => s('category', e.target.value)} placeholder="Category" />
           <input className="ve-input" type="number" value={v.unit_cost} onChange={(e) => s('unit_cost', e.target.value)} placeholder="Unit cost" />
+          <input className="ve-input" type="date" value={v.purchase_date} onChange={(e) => s('purchase_date', e.target.value)} title="Purchase date" />
           <input className="ve-input" type="number" value={v.reorder_level} onChange={(e) => s('reorder_level', e.target.value)} placeholder="Reorder level" />
           <div className="flex gap-1">
             <button
@@ -603,6 +758,7 @@ function EditItemButton({ item, onChanged }: { item: InventoryItem; onChanged: (
                   category: v.category.trim() || null,
                   unit_cost: num(v.unit_cost),
                   reorder_level: num(v.reorder_level),
+                  purchase_date: v.purchase_date || null,
                 });
                 setOpen(false);
                 await onChanged();

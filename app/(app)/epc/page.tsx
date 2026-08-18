@@ -11,48 +11,50 @@ import {
   updateEpc,
   deleteEpc,
   deleteEpcTransaction,
-  ensureVoltedgeEpc,
+  ensureInHouseEpc,
   getProjects,
   getEpcProjectFees,
   createEpcProjectFee,
   deleteEpcProjectFee,
-  getInventoryItems,
+  getInventoryStock,
   createInventoryMovement,
   createInventoryExpense,
   logActivity,
 } from '@/lib/db';
-import type { Epc, EpcTransaction, EpcProjectFee, Project, InventoryItem } from '@/lib/types';
-import { formatCurrency, num } from '@/lib/format';
-import { Spinner } from '@/components/ui';
+import type { Epc, EpcTransaction, EpcProjectFee, Project, InventoryItemStock } from '@/lib/types';
+import { formatCurrency, num, itemLabel } from '@/lib/format';
+import { Spinner, ItemOptions } from '@/components/ui';
+import { useFirm } from '@/lib/firm';
 
 const GST_OPTS = [0, 5, 12, 18, 28];
 const EXPENSE_CATS = ['Transport', 'Labour', 'Light Bill', 'Rent', 'Petrol', 'Other'];
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
 export default function EpcPage() {
+  const { matches, firmId, firmName } = useFirm();
   const [loading, setLoading] = useState(true);
   const [epcs, setEpcs] = useState<Epc[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [txns, setTxns] = useState<EpcTransaction[]>([]);
-  const [items, setItems] = useState<InventoryItem[]>([]);
+  const [items, setItems] = useState<InventoryItemStock[]>([]);
   const [selName, setSelName] = useState('— Select EPC —');
   const [showAdd, setShowAdd] = useState(false);
 
   const reloadEpcs = async () => {
     let rows = await getEpcs();
-    await ensureVoltedgeEpc(rows);
+    await ensureInHouseEpc(rows, firmId, firmName);
     rows = await getEpcs();
-    setEpcs(rows);
+    setEpcs(rows.filter(matches));
   };
 
   useEffect(() => {
     (async () => {
       await reloadEpcs();
-      setProjects(await getProjects());
-      setItems(await getInventoryItems());
+      setProjects((await getProjects()).filter(matches));
+      setItems((await getInventoryStock()).filter(matches));
       setLoading(false);
     })();
-  }, []);
+  }, [firmId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const epc = epcs.find((e) => e.name === selName) ?? null;
 
@@ -66,7 +68,7 @@ export default function EpcPage() {
   return (
     <div className="space-y-4">
       <div>
-        <div className="text-lg font-bold">🏭 EPC Partners — Funds &amp; GST</div>
+        <div className="text-lg font-bold">🏭 EPC Partners — Funds &amp; GST <span className="ve-badge ml-2 align-middle" style={{ background: '#16304d', color: '#93c5fd', fontWeight: 700 }}>{firmName}</span></div>
         <div className="text-slate-500 text-sm">
           Internal accounting between Voltedge and execution partners (EPCs). Not linked to customer payments.
         </div>
@@ -86,6 +88,7 @@ export default function EpcPage() {
           <button className="ve-btn w-full" onClick={() => setShowAdd((s) => !s)}>➕ Add New EPC</button>
           {showAdd && (
             <AddEpcForm
+              firmId={firmId}
               onAdded={async () => {
                 setShowAdd(false);
                 await reloadEpcs();
@@ -119,7 +122,7 @@ export default function EpcPage() {
   );
 }
 
-function AddEpcForm({ onAdded }: { onAdded: () => void }) {
+function AddEpcForm({ firmId, onAdded }: { firmId: string | null; onAdded: () => void }) {
   const [v, setV] = useState({ name: '', mobile: '', email: '', address: '', aadhar: '' });
   const s = (k: keyof typeof v, val: string) => setV((p) => ({ ...p, [k]: val }));
   return (
@@ -131,7 +134,7 @@ function AddEpcForm({ onAdded }: { onAdded: () => void }) {
         className="ve-btn ve-btn-primary w-full"
         onClick={async () => {
           if (!v.name.trim()) return;
-          await createEpc({ ...v, name: v.name.trim(), personal_amount: 0, gst_received: 0 });
+          await createEpc({ ...v, name: v.name.trim(), personal_amount: 0, gst_received: 0, firm_id: firmId });
           await logActivity({ action: `Added EPC: ${v.name.trim()}`, entity_type: 'user' });
           onAdded();
         }}
@@ -148,7 +151,7 @@ function EpcDetail({
   epc: Epc;
   projects: Project[];
   txns: EpcTransaction[];
-  items: InventoryItem[];
+  items: InventoryItemStock[];
   onChanged: () => Promise<void>;
   onDeleted: () => Promise<void>;
 }) {
@@ -399,7 +402,7 @@ function AddTxnForm({
   epcId: string;
   epcName: string;
   customers: string[];
-  items: InventoryItem[];
+  items: InventoryItemStock[];
   onAdded: () => Promise<void>;
 }) {
   const [v, setV] = useState({
@@ -423,11 +426,13 @@ function AddTxnForm({
     const row = await createEpcTransaction({
       epc_id: epcId,
       customer_name: v.customer,
-      purchase_material: purchaseItem?.name || '',
+      // full batch label, so the ledger keeps showing which batch was used even
+      // after the item's rate is changed or the item is deleted
+      purchase_material: purchaseItem ? itemLabel(purchaseItem) : '',
       purchase_base: pbase,
       purchase_gst_pct: v.ppct,
       purchase_invoice_no: v.pinv,
-      sale_material: saleItem?.name || '',
+      sale_material: saleItem ? itemLabel(saleItem) : '',
       sale_base: sbase,
       sale_gst_pct: v.spct,
       sale_invoice_no: v.sinv,
@@ -480,7 +485,7 @@ function AddTxnForm({
       <div className="grid grid-cols-5 gap-2">
         <select className="ve-input" value={v.purchaseItemId} onChange={(e) => s('purchaseItemId', e.target.value)}>
           <option value="">— Material (from stock) —</option>
-          {items.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
+          <ItemOptions items={items} />
         </select>
         <input className="ve-input" type="number" placeholder="Qty" value={v.pqty} onChange={(e) => s('pqty', e.target.value)} />
         <input className="ve-input" value={formatCurrency(pbase)} disabled title="Purchase base = qty × stock unit cost" />
@@ -493,7 +498,7 @@ function AddTxnForm({
       <div className="grid grid-cols-5 gap-2">
         <select className="ve-input" value={v.saleItemId} onChange={(e) => s('saleItemId', e.target.value)}>
           <option value="">— Item (from stock) —</option>
-          {items.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
+          <ItemOptions items={items} />
         </select>
         <input className="ve-input" type="number" placeholder="Qty" value={v.sqty} onChange={(e) => s('sqty', e.target.value)} />
         <input className="ve-input" type="number" placeholder="Sale Base / Unit (₹)" value={v.sbasePerUnit} onChange={(e) => s('sbasePerUnit', e.target.value)} />

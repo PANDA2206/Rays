@@ -5,6 +5,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth';
+import { useFirm } from '@/lib/firm';
 import {
   getProjects,
   getAllInstallments,
@@ -23,6 +24,7 @@ const ACTIVE_STATES = ['in_progress', 'planning', 'approved', 'on_hold'];
 export default function OverviewPage() {
   const router = useRouter();
   const { isAdmin } = useAuth();
+  const { matches, firmId } = useFirm();
   const [loading, setLoading] = useState(true);
   const [projects, setProjects] = useState<Project[]>([]);
   const [installments, setInstallments] = useState<
@@ -41,7 +43,7 @@ export default function OverviewPage() {
           getAllInstallments(),
           getActivityLogs(6),
         ]);
-        setProjects(pr);
+        setProjects(pr.filter(matches));
         setInstallments(inst);
         setLogs(lg);
         // load steps for all active projects so the (due-date-ordered) queue
@@ -60,7 +62,7 @@ export default function OverviewPage() {
         setLoading(false);
       }
     })();
-  }, [isAdmin]);
+  }, [isAdmin, firmId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (loading) return <Spinner />;
 

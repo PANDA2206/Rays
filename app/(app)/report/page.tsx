@@ -2,17 +2,20 @@
 
 // Admin Reports & Analytics — ported from streamlit_app/modules/reports.py.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { getProjects, getAllInstallments, getProjectSteps, getEpcs, getEpcTransactions } from '@/lib/db';
-import type { Project, Epc, EpcTransaction, ProjectStep } from '@/lib/types';
+import type { Project, Epc, EpcTransaction, ProjectStep, Installment } from '@/lib/types';
 import { formatCurrency, num } from '@/lib/format';
 import { HBars } from '@/components/Charts';
 import { Spinner } from '@/components/ui';
+import { useFirm } from '@/lib/firm';
 
 export default function ReportPage() {
+  const { matches, firmId, firmName, isAll } = useFirm();
   const [loading, setLoading] = useState(true);
   const [projects, setProjects] = useState<Project[]>([]);
-  const [insts, setInsts] = useState<{ amount?: number | null; due_date?: string | null; status?: string | null }[]>([]);
+  const [insts, setInsts] = useState<Installment[]>([]);
+  const [showStatement, setShowStatement] = useState(false);
   const [steps, setSteps] = useState<ProjectStep[]>([]);
   const [epcs, setEpcs] = useState<Epc[]>([]);
   const [etx, setEtx] = useState<EpcTransaction[]>([]);
@@ -20,15 +23,15 @@ export default function ReportPage() {
   useEffect(() => {
     (async () => {
       const pr = await getProjects();
-      setProjects(pr);
+      setProjects(pr.filter(matches));
       setInsts(await getAllInstallments());
       setSteps(await getProjectSteps(pr.map((p) => p.id)));
       const e = await getEpcs();
-      setEpcs(e);
+      setEpcs(e.filter(matches));
       setEtx(await getEpcTransactions());
       setLoading(false);
     })();
-  }, []);
+  }, [firmId, isAll]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (loading) return <Spinner />;
   if (projects.length === 0)
@@ -124,13 +127,20 @@ export default function ReportPage() {
   return (
     <div className="space-y-4">
       <div>
-        <div className="text-lg font-bold">📊 Admin Reports &amp; Analytics</div>
+        <div className="text-lg font-bold">📊 Admin Reports &amp; Analytics <span className="ve-badge ml-2 align-middle" style={{ background: '#16304d', color: '#93c5fd', fontWeight: 700 }}>{firmName}</span></div>
         <div className="text-slate-500 text-sm">Company-wide financials, pipeline, subsidies and execution-partner performance.</div>
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <Kpi label="Total Project Value" value={formatCurrency(totalCost)} sub={`${total} projects`} color="#3b82f6" />
-        <Kpi label="Amount Received" value={formatCurrency(totalPaid)} sub={`Collection ${collRate}%`} color="#22c55e" />
+        <Kpi
+          label="Amount Received"
+          value={formatCurrency(totalPaid)}
+          sub={`Collection ${collRate}% · click for statement`}
+          color="#22c55e"
+          onClick={() => setShowStatement((s) => !s)}
+          active={showStatement}
+        />
         <Kpi label="Outstanding Due" value={formatCurrency(balance)} sub="to be collected" color="#ef4444" />
         <Kpi label="Avg Project Value" value={formatCurrency(total ? totalCost / total : 0)} sub="per project" color="#a78bfa" />
         <Kpi label="Active Projects" value={String(active)} sub="in pipeline" color="#3b82f6" />
@@ -138,6 +148,10 @@ export default function ReportPage() {
         <Kpi label="Subsidy Disbursed" value={formatCurrency(subDisbAmt)} sub={`${subDisbCnt} projects`} color="#22c55e" />
         <Kpi label="Subsidy Pending" value={formatCurrency(subPendAmt)} sub={`${subPendCnt} projects`} color="#f59e0b" />
       </div>
+
+      {showStatement && (
+        <ReceiptStatement projects={projects} insts={insts} />
+      )}
 
       <Panel title="Execution Partner Performance">
         <div className="grid md:grid-cols-2 gap-4">
@@ -199,13 +213,150 @@ export default function ReportPage() {
   );
 }
 
-function Kpi({ label, value, sub, color }: { label: string; value: string; sub: string; color: string }) {
+/**
+ * Bank-statement style ledger of every payment actually received, so the
+ * "Amount Received" figure can be tallied line by line. Filterable by execution
+ * partner (EPC) and by date. Subsidy rows are excluded for the same reason they
+ * are excluded everywhere: that money never reached us.
+ */
+function ReceiptStatement({ projects, insts }: { projects: Project[]; insts: Installment[] }) {
+  const [epcFilter, setEpcFilter] = useState('All');
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+
+  const projById = useMemo(() => Object.fromEntries(projects.map((p) => [p.id, p])), [projects]);
+
+  const rows = useMemo(() => {
+    const out = insts
+      .filter((i) => (i.status || '').toLowerCase() === 'paid')
+      .filter((i) => (i.payment_type || '').toLowerCase() !== 'subsidy')
+      .map((i) => {
+        const p = projById[i.project_id];
+        return {
+          id: i.id,
+          date: String(i.due_date || '').slice(0, 10),
+          customer: p?.customer_name || '(unknown project)',
+          epc: p?.execution_partner || '—',
+          type: i.payment_type || 'Installment',
+          amount: num(i.amount),
+        };
+      })
+      .filter((r) => (epcFilter === 'All' ? true : r.epc === epcFilter))
+      .filter((r) => (from ? r.date >= from : true))
+      .filter((r) => (to ? r.date <= to : true));
+    // newest first, like a bank statement
+    out.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+    return out;
+  }, [insts, projById, epcFilter, from, to]);
+
+  const shownTotal = rows.reduce((s, r) => s + r.amount, 0);
+
+  // every partner that actually has a received payment, plus any on projects
+  const epcOptions = useMemo(
+    () => Array.from(new Set(projects.map((p) => p.execution_partner || '—'))).sort(),
+    [projects]
+  );
+
+  const exportCsv = () => {
+    const header = 'Date,Customer,EPC Partner,Type,Amount\n';
+    const body = rows
+      .map((r) => [r.date, r.customer, r.epc, r.type, r.amount].map((x) => `"${x ?? ''}"`).join(','))
+      .join('\n');
+    downloadCsv('voltedge_received_statement.csv', header + body + `\n\nTotal,,,,${shownTotal.toFixed(2)}\n`);
+  };
+
   return (
-    <div className="ve-card" style={{ background: '#0d1a2e', borderColor: '#16304d' }}>
+    <Panel title="🧾 Amount Received — Statement">
+      <div className="flex flex-wrap items-end gap-2 mb-3">
+        <div>
+          <label className="ve-label">EPC Partner</label>
+          <select className="ve-input" value={epcFilter} onChange={(e) => setEpcFilter(e.target.value)}>
+            <option value="All">All partners</option>
+            {epcOptions.map((e) => <option key={e} value={e}>{e}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="ve-label">From</label>
+          <input className="ve-input" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+        </div>
+        <div>
+          <label className="ve-label">To</label>
+          <input className="ve-input" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+        </div>
+        {(epcFilter !== 'All' || from || to) && (
+          <button className="ve-btn" onClick={() => { setEpcFilter('All'); setFrom(''); setTo(''); }}>Clear</button>
+        )}
+        <button className="ve-btn ml-auto" onClick={exportCsv}>⬇️ Export CSV</button>
+      </div>
+
+      <div className="text-slate-400 text-sm mb-2">
+        {rows.length} {rows.length === 1 ? 'entry' : 'entries'} · total{' '}
+        <b style={{ color: '#22c55e' }}>{formatCurrency(shownTotal)}</b>
+      </div>
+
+      {rows.length === 0 ? (
+        <div className="text-slate-500 text-sm">No payments received for this filter.</div>
+      ) : (
+        <div className="overflow-x-auto" style={{ maxHeight: 460, overflowY: 'auto' }}>
+          <table className="w-full text-[0.78rem]">
+            <thead>
+              <tr className="text-slate-500 text-left" style={{ background: '#0f1b2e' }}>
+                {['Date', 'Customer', 'EPC Partner', 'Type', 'Amount'].map((h) => (
+                  <th key={h} className="px-2 py-2 font-bold whitespace-nowrap">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.id} style={{ borderTop: '1px solid #1e293b' }}>
+                  <td className="px-2 py-1.5 text-slate-400 whitespace-nowrap">{r.date || '-'}</td>
+                  <td className="px-2 py-1.5 font-semibold">{r.customer}</td>
+                  <td className="px-2 py-1.5 text-slate-300">{r.epc}</td>
+                  <td className="px-2 py-1.5 text-slate-400">{r.type}</td>
+                  <td className="px-2 py-1.5 font-semibold" style={{ color: '#22c55e' }}>{formatCurrency(r.amount)}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr style={{ borderTop: '2px solid #16304d' }}>
+                <td className="px-2 py-2 font-bold text-slate-300" colSpan={4}>Total</td>
+                <td className="px-2 py-2 font-extrabold" style={{ color: '#22c55e' }}>{formatCurrency(shownTotal)}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+function Kpi({
+  label, value, sub, color, onClick, active,
+}: {
+  label: string; value: string; sub: string; color: string;
+  onClick?: () => void; active?: boolean;
+}) {
+  const card = (
+    <>
       <div className="text-slate-500 text-[0.7rem] uppercase tracking-wide">{label}</div>
       <div className="text-xl font-extrabold mt-1" style={{ color }}>{value}</div>
       <div className="text-slate-500 text-[0.7rem]">{sub}</div>
-    </div>
+    </>
+  );
+  if (!onClick) {
+    return (
+      <div className="ve-card" style={{ background: '#0d1a2e', borderColor: '#16304d' }}>{card}</div>
+    );
+  }
+  return (
+    <button
+      onClick={onClick}
+      className="ve-card text-left w-full transition-colors hover:brightness-125 cursor-pointer"
+      style={{ background: '#0d1a2e', borderColor: active ? color : '#16304d' }}
+      title="Open the received-payments statement"
+    >
+      {card}
+    </button>
   );
 }
 

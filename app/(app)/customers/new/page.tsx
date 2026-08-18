@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createProject, addInstallment, getEpcs } from '@/lib/db';
 import { formatCurrency, num } from '@/lib/format';
+import { useFirm } from '@/lib/firm';
 
 interface DraftInst {
   no: number;
@@ -18,15 +19,16 @@ const todayStr = () => new Date().toISOString().slice(0, 10);
 
 export default function AddProjectPage() {
   const router = useRouter();
+  const { firmId, firmName, matches } = useFirm();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const [execOpts, setExecOpts] = useState<string[]>(['Voltedge']);
+  const [execOpts, setExecOpts] = useState<string[]>([]);
 
   // customer + site
   const [f, setF] = useState({
     name: '', mobile: '', altMobile: '', email: '', aadhar: '', elecBill: '',
     addr: '', village: '', taluka: '', district: '', pin: '', latlng: '',
-    createdDate: todayStr(), exec: 'Voltedge', size: '', conn: 'On-Grid',
+    createdDate: todayStr(), exec: '', size: '', conn: 'On-Grid',
     statusDisp: 'Active', notes: '', projectCode: '',
   });
   const set = (k: keyof typeof f, v: string) => setF((p) => ({ ...p, [k]: v }));
@@ -47,19 +49,26 @@ export default function AddProjectPage() {
   const [iDue, setIDue] = useState(todayStr());
   const [iStatus, setIStatus] = useState<'pending' | 'paid'>('pending');
 
+  // Only the current firm's partners can execute its projects. The firm's own
+  // in-house row is offered first and pre-selected, since most work is in-house.
   useEffect(() => {
     getEpcs().then((rows) => {
-      const opts = ['Voltedge', ...rows.map((e) => e.name).filter((n) => n && n.toLowerCase() !== 'voltedge')];
+      const names = rows.filter(matches).map((e) => e.name).filter(Boolean);
+      const inHouse = names.filter((n) => n.toLowerCase().includes('(in-house)'));
+      const others = names.filter((n) => !n.toLowerCase().includes('(in-house)')).sort();
+      const opts = [...inHouse, ...others];
       setExecOpts(opts);
+      setF((p) => (opts.includes(p.exec) ? p : { ...p, exec: opts[0] ?? '' }));
     });
-  }, []);
+  }, [firmId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const instList = payMode === 'LOAN' ? bankInsts : draftInsts;
   const setInstList = payMode === 'LOAN' ? setBankInsts : setDraftInsts;
 
-  const subCounted = subsidyStatus === 'disbursed' ? num(subsidy) : 0;
+  // Subsidy is paid by the government straight to the customer, so it is never
+  // money we received — it stays out of the Due calculation entirely.
   const instPaidSum = instList.filter((i) => i.status === 'paid').reduce((s, i) => s + i.amount, 0);
-  const balance = num(cost) - num(advance) - subCounted - instPaidSum;
+  const balance = num(cost) - num(advance) - instPaidSum;
   const dueColor = balance >= 0 ? '#22c55e' : '#ef4444';
 
   const addInst = () => {
@@ -88,11 +97,16 @@ export default function AddProjectPage() {
       setError('Customer name is required.');
       return;
     }
+    if (!firmId) {
+      setError('Pick a firm in the sidebar before saving.');
+      return;
+    }
     setSaving(true);
     setError('');
     const status = f.statusDisp === 'Completed' ? 'completed' : 'in_progress';
     try {
       const result = await createProject({
+        firm_id: firmId,
         customer_name: f.name.trim(),
         project_code: f.projectCode.trim() || null,
         mobile: f.mobile,
@@ -153,6 +167,7 @@ export default function AddProjectPage() {
       <div className="mb-4">
         <div className="text-xl font-extrabold">Add New Solar Project / Customer</div>
         <div className="text-slate-500 text-sm">Enter customer and project details to create a new solar EPC project</div>
+        <div className="text-[0.72rem] mt-1" style={{ color: '#93c5fd' }}>Saving under <b>{firmName}</b> — change it in the sidebar.</div>
       </div>
 
       {error && (
@@ -263,7 +278,7 @@ export default function AddProjectPage() {
             <div className="text-slate-500 text-[0.68rem] uppercase">Due Amount (auto)</div>
             <div className="text-lg font-extrabold" style={{ color: dueColor }}>{formatCurrency(balance)}</div>
             <div className="text-slate-500 text-[0.68rem]">
-              Cost − Advance − Subsidy − Paid Installments · {subsidyStatus === 'disbursed' ? 'incl. subsidy' : 'subsidy pending — excluded'}
+              Cost − Advance − Paid Installments
             </div>
           </div>
 
