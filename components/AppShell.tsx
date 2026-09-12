@@ -5,9 +5,7 @@
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname } from 'next/navigation';
-import { useEffect } from 'react';
 import { useAuth } from '@/lib/auth';
-import { useFirm, ALL_FIRMS } from '@/lib/firm';
 
 interface NavItem {
   label: string;
@@ -30,55 +28,6 @@ const NAV: NavItem[] = [
   { label: 'Servicing', icon: '🛠️', href: '/servicing' }, // NAV[9]
 ];
 
-/**
- * Which firm you are working in. Everything on every page — and everything
- * saved from it — belongs to the firm picked here. "All firms" is offered only
- * on Reports, because it is a read-only combined view with nothing to save into.
- */
-function FirmSwitcher() {
-  const pathname = usePathname();
-  const { firms, selected, setSelected, loading, isAll } = useFirm();
-  const onReport = pathname.startsWith('/report');
-
-  // leaving Reports while on the combined view drops back to a real firm
-  useEffect(() => {
-    if (!onReport && isAll && firms.length) setSelected(firms[0].id);
-  }, [onReport, isAll, firms, setSelected]);
-
-  if (loading) return <div className="px-2 pb-3 text-[0.7rem] text-slate-600">Loading firms…</div>;
-
-  if (!firms.length) {
-    return (
-      <div className="px-2 pb-3 text-[0.68rem]" style={{ color: '#fbbf24' }}>
-        ⚠️ No firms found — run the firms migration.
-      </div>
-    );
-  }
-
-  return (
-    <div className="px-1 pb-3">
-      <div className="text-[0.62rem] text-slate-500 font-bold uppercase tracking-wide mb-1">
-        Working under
-      </div>
-      <select
-        className="w-full rounded-lg px-2 py-1.5 text-[0.78rem] font-semibold"
-        style={{
-          background: isAll ? '#1c1708' : '#0d1a2e',
-          border: `1px solid ${isAll ? '#a16207' : '#16304d'}`,
-          color: isAll ? '#fbbf24' : '#f1f5f9',
-        }}
-        value={selected}
-        onChange={(e) => setSelected(e.target.value)}
-      >
-        {firms.map((f) => (
-          <option key={f.id} value={f.id}>{f.name}</option>
-        ))}
-        {onReport && <option value={ALL_FIRMS}>★ All firms (combined)</option>}
-      </select>
-    </div>
-  );
-}
-
 function Sidebar() {
   const pathname = usePathname();
   const { isAdmin, identity, employeeCode, role, signOut } = useAuth();
@@ -97,11 +46,9 @@ function Sidebar() {
           alt="RAYS"
           width={215}
           height={70}
-          className="mx-auto w-full max-w-[200px] h-auto"
+          className="mx-auto w-full max-w-[130px] h-auto"
         />
       </div>
-
-      <FirmSwitcher />
 
       <nav className="flex flex-col gap-1">
         <NavLink item={NAV[0]} active={isActive('/')} />
