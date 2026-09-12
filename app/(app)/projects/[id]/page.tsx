@@ -1047,17 +1047,16 @@ function AmcServiceCard({ type, service, logsForType, remindersForType, project,
     await onSaved();
   };
 
+  // Propose/said-yes/said-no aren't logged to the company-wide activity feed —
+  // they're already tracked in full via amc_reminder_logs and the service's
+  // own customer_response, visible in this section's own history feed below.
+  // Only the real milestones (formalize, log a service, remove from AMC) show
+  // up there, so it doesn't drown in per-contact sales-pipeline noise.
   const sendReminder = async (alsoPropose: boolean) => {
     await addAmcReminderLog({ project_id: project.id, service_type: type, channel, note: remNote.trim() || null });
     if (alsoPropose) {
       await updateAmcService(service.id, { customer_response: 'proposed' });
     }
-    await logActivity({
-      action: `${alsoPropose ? 'Proposed' : 'Reminder sent for'} ${AMC_SERVICE_LABELS[type]}`,
-      entity_type: 'amc_reminder',
-      project_id: project.id,
-      project_name: project.customer_name,
-    });
     setReminding(false);
     setRemNote('');
     await onSaved();
@@ -1065,13 +1064,11 @@ function AmcServiceCard({ type, service, logsForType, remindersForType, project,
 
   const markSaidYes = async () => {
     await updateAmcService(service.id, { customer_response: 'said_yes' });
-    await logActivity({ action: `${AMC_SERVICE_LABELS[type]}: customer said yes`, entity_type: 'amc_service', project_id: project.id, project_name: project.customer_name });
     await onSaved();
   };
 
   const markSaidNo = async () => {
     await updateAmcService(service.id, { customer_response: 'declined' });
-    await logActivity({ action: `${AMC_SERVICE_LABELS[type]}: customer said no`, entity_type: 'amc_service', project_id: project.id, project_name: project.customer_name });
     await onSaved();
   };
 

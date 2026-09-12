@@ -10,6 +10,7 @@ import { timeAgo } from '@/lib/format';
 import { Spinner } from '@/components/ui';
 
 const ADMIN_EMAIL = 'voltedgeenergysolutions011@gmail.com';
+const LOG_PAGE_SIZE = 15;
 
 export default function UsersPage() {
   const [loading, setLoading] = useState(true);
@@ -18,6 +19,7 @@ export default function UsersPage() {
   const [logUser, setLogUser] = useState('All Employees');
   const [logType, setLogType] = useState('All Actions');
   const [logLimit, setLogLimit] = useState(25);
+  const [logPage, setLogPage] = useState(1);
 
   const reload = async () => setUsers(await getAppUsers());
 
@@ -32,6 +34,9 @@ export default function UsersPage() {
     const email = logUser === 'All Employees' ? undefined : logUser.split('(').pop()?.replace(')', '');
     getActivityLogs(logLimit, email).then(setLogs);
   }, [logUser, logLimit, users]);
+
+  // reset to page 1 when filters change
+  useEffect(() => setLogPage(1), [logUser, logType, logLimit]);
 
   if (loading) return <Spinner />;
 
@@ -49,6 +54,11 @@ export default function UsersPage() {
   const uniqueUsers = new Set(filteredLogs.map((l) => l.user_email)).size;
   const projectActions = filteredLogs.filter((l) => l.entity_type === 'project').length;
   const stepActions = filteredLogs.filter((l) => l.entity_type === 'step').length;
+
+  const logPages = Math.max(1, Math.ceil(filteredLogs.length / LOG_PAGE_SIZE));
+  const lpg = Math.min(Math.max(1, logPage), logPages);
+  const logStart = (lpg - 1) * LOG_PAGE_SIZE;
+  const pageLogs = filteredLogs.slice(logStart, logStart + LOG_PAGE_SIZE);
 
   return (
     <div className="space-y-4">
@@ -131,7 +141,7 @@ export default function UsersPage() {
             ))}
         </select>
         <select className="ve-input" value={logType} onChange={(e) => setLogType(e.target.value)}>
-          {['All Actions', 'project', 'step', 'note', 'document', 'installment'].map((t) => (
+          {['All Actions', 'project', 'step', 'note', 'document', 'installment', 'amc', 'amc_service'].map((t) => (
             <option key={t}>{t}</option>
           ))}
         </select>
@@ -151,10 +161,26 @@ export default function UsersPage() {
             <Metric label="Step Updates" value={stepActions} />
           </div>
           <div className="ve-panel" style={{ borderColor: '#334155' }}>
-            {filteredLogs.map((lg, i) => (
-              <LogRow key={i} log={lg} first={i === 0} />
+            {pageLogs.map((lg, i) => (
+              <LogRow key={logStart + i} log={lg} first={i === 0} />
             ))}
           </div>
+          {logPages > 1 && (
+            <div className="mt-2">
+              <div className="text-slate-500 text-xs mb-1">
+                Showing {logStart + 1}–{Math.min(logStart + LOG_PAGE_SIZE, filteredLogs.length)} of {filteredLogs.length} · Page {lpg} of {logPages}
+              </div>
+              <div className="flex gap-1 flex-wrap">
+                <button className="ve-btn px-3 py-1" disabled={lpg <= 1} onClick={() => setLogPage(lpg - 1)}>‹</button>
+                {pageWindow(lpg, logPages).map((n) => (
+                  <button key={n} className={`ve-btn px-3 py-1 ${n === lpg ? 've-btn-primary' : ''}`} onClick={() => setLogPage(n)}>
+                    {n}
+                  </button>
+                ))}
+                <button className="ve-btn px-3 py-1" disabled={lpg >= logPages} onClick={() => setLogPage(lpg + 1)}>›</button>
+              </div>
+            </div>
+          )}
         </>
       ) : (
         <div className="text-slate-500 text-sm">No activity logs found for the selected filter.</div>
@@ -165,7 +191,16 @@ export default function UsersPage() {
 
 const ICONS: Record<string, string> = {
   project: '📁', step: '🔧', note: '📝', document: '📄', installment: '💳', user: '👤',
+  amc: '🛠️', amc_service: '🛠️',
 };
+
+function pageWindow(pg: number, pages: number): number[] {
+  const win = 7;
+  let lo = Math.max(1, pg - Math.floor(win / 2));
+  const hi = Math.min(pages, lo + win - 1);
+  lo = Math.max(1, hi - win + 1);
+  return Array.from({ length: hi - lo + 1 }, (_, i) => lo + i);
+}
 
 /**
  * One activity entry. Entries recorded against a project open that project, so
