@@ -25,6 +25,14 @@ import {
   deleteProjectNote,
   deleteProject,
   logActivity,
+  getOrCreateProjectAmc,
+  getOrCreateAmcServices,
+  getAmcServiceLogs,
+  getAmcReminderLogs,
+  updateProjectAmc,
+  updateAmcService,
+  addAmcServiceLog,
+  addAmcReminderLog,
 } from '@/lib/db';
 import { useAuth } from '@/lib/auth';
 import type {
@@ -34,9 +42,14 @@ import type {
   Installment,
   ProjectNote,
   ActivityLog,
+  ProjectAmc,
+  ProjectAmcService,
+  AmcServiceLog,
+  AmcReminderLog,
 } from '@/lib/types';
 import { formatCurrency, num } from '@/lib/format';
 import { Spinner } from '@/components/ui';
+import { AMC_SERVICE_TYPES, AMC_SERVICE_LABELS, AMC_SERVICE_ICONS, computeAmcStatus, computeAmcPlan, lastServiceDate, type AmcServiceType } from '@/lib/amc';
 
 // Indexed by position, so this order must track DEFAULT_STEPS in lib/db.ts
 // (🧪 Meter Testing sits at #6, ahead of 🔧 fabrication and ⚡ installation).
@@ -71,6 +84,11 @@ export default function ProjectDetailPage() {
   const [notes, setNotes] = useState<ProjectNote[]>([]);
   const [logs, setLogs] = useState<ActivityLog[]>([]);
   const [epcNames, setEpcNames] = useState<string[]>(['Voltedge']);
+  const [amc, setAmc] = useState<ProjectAmc | null>(null);
+  const [amcServices, setAmcServices] = useState<ProjectAmcService[]>([]);
+  const [amcLogs, setAmcLogs] = useState<AmcServiceLog[]>([]);
+  const [amcReminders, setAmcReminders] = useState<AmcReminderLog[]>([]);
+  const [tab, setTab] = useState<'summary' | 'workflow' | 'financial' | 'amc'>('summary');
 
   const load = useCallback(async () => {
     const p = await getProjectById(id);
@@ -96,6 +114,19 @@ export default function ProjectDetailPage() {
       'Voltedge',
       ...epcs.map((e) => e.name).filter((nm) => nm && nm.toLowerCase() !== 'voltedge'),
     ]);
+    // AMC/servicing only applies once a project is completed.
+    if (p.project_status === 'completed') {
+      const [a, svcs, sl, rl] = await Promise.all([
+        getOrCreateProjectAmc(id),
+        getOrCreateAmcServices(id),
+        getAmcServiceLogs(id),
+        getAmcReminderLogs(id),
+      ]);
+      setAmc(a);
+      setAmcServices(svcs);
+      setAmcLogs(sl);
+      setAmcReminders(rl);
+    }
     setLoading(false);
   }, [id, router]);
 
@@ -125,66 +156,107 @@ export default function ProjectDetailPage() {
       </div>
       <div className="text-slate-500 text-xs">Last updated: {fmtDateTime(project.updated_at || project.created_at)}</div>
 
-      {/* summary | subsidy */}
-      <div className="grid lg:grid-cols-[1.75fr_1fr] gap-3">
-        <Card title="📑 PROJECT SUMMARY">
-          <div className="flex gap-4 items-center">
-            <div className="flex-1 grid grid-cols-2 gap-x-4 gap-y-1">
-              <ProjectIdField project={project} isAdmin={isAdmin} onSaved={load} />
-              <KV label="Customer Name" value={project.customer_name || '-'} />
-              <KV label="Last Updated On" value={fmtDateTime(project.updated_at || project.created_at)} />
-              <KV label="Current Stage" value={curStage ? `#${curStage.step_no} · ${curStage.step_name}` : '-'} />
-            </div>
-            <ProgressDonut progress={progress} />
-          </div>
-        </Card>
-        <SubsidyCard project={project} onSaved={load} />
+      <div className="flex gap-2 flex-wrap">
+        <TabButton active={tab === 'summary'} onClick={() => setTab('summary')}>📑 Project Summary</TabButton>
+        <TabButton active={tab === 'workflow'} onClick={() => setTab('workflow')}>🛠️ Workflow & Milestones</TabButton>
+        <TabButton active={tab === 'financial'} onClick={() => setTab('financial')}>💰 Financial Progress</TabButton>
+        <TabButton active={tab === 'amc'} onClick={() => setTab('amc')}>🔧 AMC / Servicing</TabButton>
       </div>
 
-      {/* customer | project info */}
-      <div className="grid md:grid-cols-2 gap-3">
-        <CustomerInfo project={project} onSaved={load} />
-        <ProjectInfo project={project} epcNames={epcNames} onSaved={load} />
-      </div>
-
-      {/* workflow */}
-      <Card title="🛠️ PROJECT WORKFLOW & MILESTONES">
-        <div className="flex gap-2 overflow-x-auto pb-2">
-          {steps.map((step, i) => {
-            const st = step.status;
-            const ring = st === 'completed' ? '#22c55e' : st === 'in_progress' ? '#3b82f6' : '#475569';
-            const badge = st === 'completed' ? '#16a34a' : st === 'in_progress' ? '#2563eb' : '#1e293b';
-            const lbl = st === 'completed' ? '✓ Completed' : st === 'in_progress' ? '● In Progress' : 'Pending';
-            const lblClr = st === 'completed' ? '#22c55e' : st === 'in_progress' ? '#3b82f6' : '#ef4444';
-            return (
-              <div key={step.id} className="text-center rounded-lg p-2.5" style={{ flex: '0 0 100px', border: `1px solid ${st === 'pending' ? '#1e293b' : ring}`, background: '#0b1626' }}>
-                <div className="mx-auto mb-1.5 rounded-full text-white text-[0.66rem] font-bold flex items-center justify-center" style={{ width: 24, height: 24, background: badge, border: `2px solid ${ring}` }}>
-                  {step.step_no}
-                </div>
-                <div className="text-base mb-0.5">{STEP_ICONS[i] ?? '•'}</div>
-                <div className="text-[0.58rem] font-bold text-slate-300 leading-tight min-h-[26px]">{step.step_name}</div>
-                <div className="text-[0.54rem] text-slate-500 my-0.5">{fmtDate(step.end_date || step.start_date)}</div>
-                <span className="text-[0.6rem] font-bold" style={{ color: lblClr }}>{lbl}</span>
-              </div>
-            );
-          })}
-        </div>
-        <StepUpdater steps={steps} project={project} onSaved={load} />
-      </Card>
-
-      {/* bottom grid */}
-      <div className="grid lg:grid-cols-[2.1fr_1.2fr_1.2fr] gap-3">
-        <Financials project={project} installments={insts} isAdmin={isAdmin} onSaved={load} />
+      {tab === 'summary' && (
         <div className="space-y-3">
-          <Documents docs={docs} project={project} onSaved={load} />
-          <InternalNotes notes={notes} project={project} onSaved={load} />
-        </div>
-        <Timeline logs={logs} />
-      </div>
+          <Card title="📑 PROJECT SUMMARY">
+            <div className="flex gap-4 items-center">
+              <div className="flex-1 grid grid-cols-2 gap-x-4 gap-y-1">
+                <ProjectIdField project={project} isAdmin={isAdmin} onSaved={load} />
+                <KV label="Customer Name" value={project.customer_name || '-'} />
+                <KV label="Last Updated On" value={fmtDateTime(project.updated_at || project.created_at)} />
+                <KV label="Current Stage" value={curStage ? `#${curStage.step_no} · ${curStage.step_name}` : '-'} />
+              </div>
+              <ProgressDonut progress={progress} />
+            </div>
+          </Card>
 
-      {/* admin-only danger zone */}
-      {isAdmin && <DangerZone project={project} />}
+          <div className="grid md:grid-cols-2 gap-3">
+            <CustomerInfo project={project} onSaved={load} />
+            <ProjectInfo project={project} epcNames={epcNames} onSaved={load} />
+          </div>
+
+          <Timeline logs={logs} />
+
+          {isAdmin && <DangerZone project={project} />}
+        </div>
+      )}
+
+      {tab === 'workflow' && (
+        <div className="space-y-3">
+          <Card title="🛠️ PROJECT WORKFLOW & MILESTONES">
+            <div className="flex gap-2 overflow-x-auto pb-2">
+              {steps.map((step, i) => {
+                const st = step.status;
+                const ring = st === 'completed' ? '#22c55e' : st === 'in_progress' ? '#3b82f6' : '#475569';
+                const badge = st === 'completed' ? '#16a34a' : st === 'in_progress' ? '#2563eb' : '#1e293b';
+                const lbl = st === 'completed' ? '✓ Completed' : st === 'in_progress' ? '● In Progress' : 'Pending';
+                const lblClr = st === 'completed' ? '#22c55e' : st === 'in_progress' ? '#3b82f6' : '#ef4444';
+                return (
+                  <div key={step.id} className="text-center rounded-lg p-2.5" style={{ flex: '0 0 100px', border: `1px solid ${st === 'pending' ? '#1e293b' : ring}`, background: '#0b1626' }}>
+                    <div className="mx-auto mb-1.5 rounded-full text-white text-[0.66rem] font-bold flex items-center justify-center" style={{ width: 24, height: 24, background: badge, border: `2px solid ${ring}` }}>
+                      {step.step_no}
+                    </div>
+                    <div className="text-base mb-0.5">{STEP_ICONS[i] ?? '•'}</div>
+                    <div className="text-[0.58rem] font-bold text-slate-300 leading-tight min-h-[26px]">{step.step_name}</div>
+                    <div className="text-[0.54rem] text-slate-500 my-0.5">{fmtDate(step.end_date || step.start_date)}</div>
+                    <span className="text-[0.6rem] font-bold" style={{ color: lblClr }}>{lbl}</span>
+                  </div>
+                );
+              })}
+            </div>
+            <StepUpdater steps={steps} project={project} onSaved={load} />
+          </Card>
+
+          <div className="grid md:grid-cols-2 gap-3">
+            <Documents docs={docs} project={project} onSaved={load} />
+            <InternalNotes notes={notes} project={project} onSaved={load} />
+          </div>
+        </div>
+      )}
+
+      {tab === 'financial' && (
+        <div className="grid lg:grid-cols-[1.75fr_1fr] gap-3">
+          <Financials project={project} installments={insts} isAdmin={isAdmin} onSaved={load} />
+          <SubsidyCard project={project} onSaved={load} />
+        </div>
+      )}
+
+      {tab === 'amc' && (
+        <Card title="🛠️ AMC / SERVICING">
+          {project.project_status === 'completed' && amc ? (
+            <AmcSection
+              project={project}
+              amc={amc}
+              services={amcServices}
+              serviceLogs={amcLogs}
+              reminders={amcReminders}
+              onSaved={load}
+            />
+          ) : (
+            <div className="text-slate-500 text-sm">Available once this project is completed.</div>
+          )}
+        </Card>
+      )}
     </div>
+  );
+}
+
+function TabButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      className="px-3.5 py-1.5 rounded-lg text-[0.82rem] font-semibold"
+      style={active ? { background: '#2563eb22', color: '#3b82f6', border: '1px solid #2563eb' } : { background: 'transparent', color: '#94a3b8', border: '1px solid #16304d' }}
+      onClick={onClick}
+    >
+      {children}
+    </button>
   );
 }
 
@@ -836,18 +908,321 @@ function InternalNotes({ notes, project, onSaved }: { notes: ProjectNote[]; proj
 function Timeline({ logs }: { logs: ActivityLog[] }) {
   return (
     <Card title="🕐 PROJECT TIMELINE">
-      {logs.length === 0 ? (
-        <div className="text-slate-600 text-[0.82rem]">No activity recorded yet.</div>
-      ) : (
-        logs.map((lg, i) => (
-          <div key={i} className="relative pl-3.5 pb-3" style={{ borderLeft: '2px solid #2563eb' }}>
-            <div className="absolute rounded-full" style={{ left: -5, top: 2, width: 8, height: 8, background: '#3b82f6' }} />
-            <div className="text-[0.68rem] text-slate-400">{fmtDateTime(lg.created_at)}</div>
-            <div className="text-[0.78rem] text-slate-200">{lg.action}</div>
-            <div className="text-[0.66rem] text-slate-500">{lg.user_name || ''}</div>
-          </div>
-        ))
-      )}
+      <div className="overflow-y-auto pr-1" style={{ maxHeight: 420 }}>
+        {logs.length === 0 ? (
+          <div className="text-slate-600 text-[0.82rem]">No activity recorded yet.</div>
+        ) : (
+          logs.map((lg, i) => (
+            <div key={i} className="relative pl-3.5 pb-3" style={{ borderLeft: '2px solid #2563eb' }}>
+              <div className="absolute rounded-full" style={{ left: -5, top: 2, width: 8, height: 8, background: '#3b82f6' }} />
+              <div className="text-[0.68rem] text-slate-400">{fmtDateTime(lg.created_at)}</div>
+              <div className="text-[0.78rem] text-slate-200">{lg.action}</div>
+              <div className="text-[0.66rem] text-slate-500">{lg.user_name || ''}</div>
+            </div>
+          ))
+        )}
+      </div>
     </Card>
+  );
+}
+
+// ── AMC / Servicing ─────────────────────────────────────────────────────────
+
+function AmcSection({ project, amc, services, serviceLogs, reminders, onSaved }: {
+  project: Project;
+  amc: ProjectAmc;
+  services: ProjectAmcService[];
+  serviceLogs: AmcServiceLog[];
+  reminders: AmcReminderLog[];
+  onSaved: () => Promise<void>;
+}) {
+  const plan = computeAmcPlan(services);
+
+  return (
+    <div className="space-y-3">
+      <AmcHeader project={project} amc={amc} plan={plan} onSaved={onSaved} />
+      <div className="grid md:grid-cols-3 gap-2">
+        {AMC_SERVICE_TYPES.map((t) => {
+          const svc = services.find((s) => s.service_type === t);
+          if (!svc) return null;
+          const logsForType = serviceLogs.filter((l) => l.service_type === t);
+          const remindersForType = reminders.filter((r) => r.service_type === t);
+          return (
+            <AmcServiceCard
+              key={t}
+              type={t}
+              service={svc}
+              logsForType={logsForType}
+              remindersForType={remindersForType}
+              project={project}
+              onSaved={onSaved}
+            />
+          );
+        })}
+      </div>
+      <AmcHistoryFeed serviceLogs={serviceLogs} reminders={reminders} />
+    </div>
+  );
+}
+
+function AmcHeader({ project, amc, plan, onSaved }: { project: Project; amc: ProjectAmc; plan: { label: string; count: number }; onSaved: () => Promise<void> }) {
+  const [taken, setTaken] = useState(amc.amc_taken);
+
+  const save = async () => {
+    await updateProjectAmc(amc.id, { amc_taken: taken });
+    await logActivity({
+      action: `AMC ${taken ? 'enabled' : 'disabled'}`,
+      entity_type: 'amc',
+      project_id: project.id,
+      project_name: project.customer_name,
+    });
+    await onSaved();
+  };
+
+  return (
+    <div className="flex items-center justify-between flex-wrap gap-3 pb-3" style={{ borderBottom: '1px solid #16304d' }}>
+      <div>
+        <div className="text-slate-500 text-[0.68rem] uppercase tracking-wide mb-1">AMC taken?</div>
+        <div className="inline-flex rounded-lg overflow-hidden text-[0.78rem]" style={{ border: '1px solid #334155' }}>
+          <button className="px-3 py-1.5" style={taken ? { background: '#16a34a33', color: '#22c55e', fontWeight: 600 } : { color: '#94a3b8' }} onClick={() => setTaken(true)}>Yes</button>
+          <button className="px-3 py-1.5" style={!taken ? { background: '#dc262633', color: '#ef4444', fontWeight: 600 } : { color: '#94a3b8' }} onClick={() => setTaken(false)}>No</button>
+        </div>
+      </div>
+      <div className="flex items-end gap-2">
+        <div>
+          <div className="text-slate-500 text-[0.68rem] uppercase tracking-wide mb-1">Plan</div>
+          <div className="text-[0.86rem] font-semibold pt-1.5" style={{ color: plan.count === 0 ? '#94a3b8' : plan.count === 3 ? '#22c55e' : '#f59e0b' }}>
+            {plan.label} {plan.count > 0 && `(${plan.count}/3)`}
+          </div>
+        </div>
+        <button className="ve-btn ve-btn-primary" onClick={save}>💾 Save</button>
+      </div>
+    </div>
+  );
+}
+
+function AmcServiceCard({ type, service, logsForType, remindersForType, project, onSaved }: {
+  type: AmcServiceType;
+  service: ProjectAmcService;
+  logsForType: AmcServiceLog[];
+  remindersForType: AmcReminderLog[];
+  project: Project;
+  onSaved: () => Promise<void>;
+}) {
+  const [logging, setLogging] = useState(false);
+  const [reminding, setReminding] = useState(false);
+  const [formalizing, setFormalizing] = useState(false);
+  const [formInterval, setFormInterval] = useState('3');
+  const [svcDate, setSvcDate] = useState(new Date().toISOString().slice(0, 10));
+  const [tech, setTech] = useState('');
+  const [amt, setAmt] = useState('');
+  const [note, setNote] = useState('');
+  const [channel, setChannel] = useState('call');
+  const [remNote, setRemNote] = useState('');
+
+  const status = computeAmcStatus(service, logsForType, remindersForType);
+  const last = lastServiceDate(logsForType);
+
+  const logService = async () => {
+    if (!svcDate) return;
+    await addAmcServiceLog({
+      project_id: project.id,
+      service_type: type,
+      service_date: svcDate,
+      technician: tech.trim() || null,
+      amount: num(amt),
+      note: note.trim() || null,
+    });
+    await logActivity({
+      action: `Logged ${AMC_SERVICE_LABELS[type]} service`,
+      entity_type: 'amc_service',
+      project_id: project.id,
+      project_name: project.customer_name,
+      details: note.trim().slice(0, 150),
+    });
+    setLogging(false);
+    setTech('');
+    setAmt('');
+    setNote('');
+    await onSaved();
+  };
+
+  const sendReminder = async (alsoPropose: boolean) => {
+    await addAmcReminderLog({ project_id: project.id, service_type: type, channel, note: remNote.trim() || null });
+    if (alsoPropose) {
+      await updateAmcService(service.id, { customer_response: 'proposed' });
+    }
+    await logActivity({
+      action: `${alsoPropose ? 'Proposed' : 'Reminder sent for'} ${AMC_SERVICE_LABELS[type]}`,
+      entity_type: 'amc_reminder',
+      project_id: project.id,
+      project_name: project.customer_name,
+    });
+    setReminding(false);
+    setRemNote('');
+    await onSaved();
+  };
+
+  const markSaidYes = async () => {
+    await updateAmcService(service.id, { customer_response: 'said_yes' });
+    await logActivity({ action: `${AMC_SERVICE_LABELS[type]}: customer said yes`, entity_type: 'amc_service', project_id: project.id, project_name: project.customer_name });
+    await onSaved();
+  };
+
+  const markSaidNo = async () => {
+    await updateAmcService(service.id, { customer_response: 'declined' });
+    await logActivity({ action: `${AMC_SERVICE_LABELS[type]}: customer said no`, entity_type: 'amc_service', project_id: project.id, project_name: project.customer_name });
+    await onSaved();
+  };
+
+  const formalizeRecurring = async () => {
+    const months = num(formInterval) || 3;
+    await updateAmcService(service.id, { in_amc: true, is_recurring: true, interval_months: months });
+    await logActivity({ action: `${AMC_SERVICE_LABELS[type]} formalized into AMC — recurring every ${months} months`, entity_type: 'amc_service', project_id: project.id, project_name: project.customer_name });
+    setFormalizing(false);
+    await onSaved();
+  };
+
+  const formalizeOneTime = async () => {
+    await updateAmcService(service.id, { in_amc: true, is_recurring: false });
+    await logActivity({ action: `${AMC_SERVICE_LABELS[type]} formalized into AMC — one-time`, entity_type: 'amc_service', project_id: project.id, project_name: project.customer_name });
+    setFormalizing(false);
+    await onSaved();
+  };
+
+  const removeFromAmc = async () => {
+    await updateAmcService(service.id, { in_amc: false });
+    await logActivity({ action: `${AMC_SERVICE_LABELS[type]} removed from AMC`, entity_type: 'amc_service', project_id: project.id, project_name: project.customer_name });
+    await onSaved();
+  };
+
+  return (
+    <div className="rounded-lg p-3" style={{ background: '#0b1626', border: '1px solid #16304d' }}>
+      <div className="flex items-center justify-between mb-1.5">
+        <span className="text-[0.82rem] font-semibold text-slate-200">{AMC_SERVICE_ICONS[type]} {AMC_SERVICE_LABELS[type]}</span>
+        <span>{service.in_amc ? '✅' : '⬜'}</span>
+      </div>
+      <div className="text-[0.7rem] text-slate-500 mb-1">{last ? `Last: ${fmtDate(last)}` : 'Not serviced yet'}</div>
+      {status.lastContactDate && (
+        <div className="text-[0.7rem] text-slate-500 mb-1.5">Last approached: {fmtDate(status.lastContactDate)}</div>
+      )}
+      <div className="flex items-center gap-1.5 flex-wrap mb-2">
+        <span className="ve-badge inline-block" style={{ background: status.color + '22', color: status.color, border: `1px solid ${status.color}` }}>{status.label}</span>
+        {status.needsReapproach && (
+          <span className="ve-badge inline-block" style={{ background: '#ef444422', color: '#ef4444', border: '1px solid #ef4444' }}>🚩 Follow up</span>
+        )}
+      </div>
+
+      <div className="space-y-1.5">
+        {!service.in_amc && service.customer_response === 'said_yes' && !formalizing && (
+          <button className="ve-btn w-full text-xs" onClick={() => setFormalizing(true)}>📝 Formalize into AMC</button>
+        )}
+        {!service.in_amc && service.customer_response === 'said_yes' && formalizing && (
+          <div className="space-y-1.5 pt-1">
+            <div className="flex items-center gap-1">
+              <span className="text-slate-400 text-[0.68rem]">Every</span>
+              <input className="ve-input text-xs" style={{ width: 50 }} type="number" min={1} value={formInterval} onChange={(e) => setFormInterval(e.target.value)} />
+              <span className="text-slate-400 text-[0.68rem]">months</span>
+            </div>
+            <button className="ve-btn ve-btn-primary w-full text-xs" onClick={formalizeRecurring}>🔁 Recurring</button>
+            <button className="ve-btn w-full text-xs" onClick={formalizeOneTime}>1️⃣ One-time only</button>
+            <button className="ve-btn text-xs w-full" onClick={() => setFormalizing(false)}>Cancel</button>
+          </div>
+        )}
+        {!service.in_amc && service.customer_response === 'proposed' && (
+          <div className="flex gap-1.5">
+            <button className="ve-btn flex-1 text-xs" onClick={markSaidYes}>✅ Said yes</button>
+            <button className="ve-btn flex-1 text-xs" onClick={markSaidNo}>👎 Said no</button>
+          </div>
+        )}
+        {!service.in_amc && service.customer_response === 'declined' && !reminding && (
+          <button className="ve-btn w-full text-xs" onClick={() => setReminding(true)}>📣 Re-approach</button>
+        )}
+        {!service.in_amc && service.customer_response === 'none' && !reminding && (
+          <button className="ve-btn w-full text-xs" onClick={() => setReminding(true)}>📣 Propose</button>
+        )}
+        {service.in_amc && !logging && (
+          <button className="ve-btn w-full text-xs" onClick={() => setLogging(true)}>🧰 Log Service</button>
+        )}
+        {service.in_amc && !reminding && (
+          <button className="ve-btn w-full text-xs" onClick={() => setReminding(true)}>📞 Send Reminder</button>
+        )}
+        {service.in_amc && (
+          <button className="text-slate-500 text-[0.68rem] hover:text-red-400 w-full text-center pt-0.5" onClick={removeFromAmc}>↩ Remove from AMC</button>
+        )}
+
+        {logging && (
+          <div className="space-y-1.5 pt-1">
+            <input className="ve-input text-xs" type="date" value={svcDate} onChange={(e) => setSvcDate(e.target.value)} />
+            <input className="ve-input text-xs" value={tech} onChange={(e) => setTech(e.target.value)} placeholder="Technician" />
+            <input className="ve-input text-xs" type="number" value={amt} onChange={(e) => setAmt(e.target.value)} placeholder="Amount (₹)" />
+            <input className="ve-input text-xs" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Note" />
+            <div className="flex gap-1.5">
+              <button className="ve-btn ve-btn-primary flex-1 text-xs" onClick={logService}>Save</button>
+              <button className="ve-btn text-xs" onClick={() => setLogging(false)}>Cancel</button>
+            </div>
+          </div>
+        )}
+
+        {reminding && (
+          <div className="space-y-1.5 pt-1">
+            <select className="ve-input text-xs" value={channel} onChange={(e) => setChannel(e.target.value)}>
+              <option value="call">Call</option>
+              <option value="whatsapp">WhatsApp</option>
+              <option value="sms">SMS</option>
+              <option value="visit">Visit</option>
+              <option value="other">Other</option>
+            </select>
+            <input className="ve-input text-xs" value={remNote} onChange={(e) => setRemNote(e.target.value)} placeholder="Note" />
+            <div className="flex gap-1.5">
+              <button className="ve-btn ve-btn-primary flex-1 text-xs" onClick={() => sendReminder(!service.in_amc)}>Save</button>
+              <button className="ve-btn text-xs" onClick={() => setReminding(false)}>Cancel</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function AmcHistoryFeed({ serviceLogs, reminders }: { serviceLogs: AmcServiceLog[]; reminders: AmcReminderLog[] }) {
+  const rows = [
+    ...serviceLogs.map((l) => ({
+      ts: l.created_at || l.service_date,
+      node: (
+        <div key={`s-${l.id}`} className="relative pl-3.5 pb-3" style={{ borderLeft: '2px solid #22c55e' }}>
+          <div className="absolute rounded-full" style={{ left: -5, top: 2, width: 8, height: 8, background: '#22c55e' }} />
+          <div className="text-[0.68rem] text-slate-400">{fmtDate(l.service_date)}</div>
+          <div className="text-[0.78rem] text-slate-200">
+            {AMC_SERVICE_ICONS[l.service_type as AmcServiceType] ?? '🛠️'} {AMC_SERVICE_LABELS[l.service_type as AmcServiceType] ?? l.service_type}
+            {l.technician ? ` · ${l.technician}` : ''}
+          </div>
+          {num(l.amount) > 0 && <div className="text-[0.66rem] text-slate-500">{formatCurrency(num(l.amount))}</div>}
+        </div>
+      ),
+    })),
+    ...reminders.map((r) => ({
+      ts: r.created_at || '',
+      node: (
+        <div key={`r-${r.id}`} className="relative pl-3.5 pb-3" style={{ borderLeft: '2px solid #f59e0b' }}>
+          <div className="absolute rounded-full" style={{ left: -5, top: 2, width: 8, height: 8, background: '#f59e0b' }} />
+          <div className="text-[0.68rem] text-slate-400">{fmtDateTime(r.created_at)}</div>
+          <div className="text-[0.78rem] text-slate-200">
+            💬 Reminder sent · {AMC_SERVICE_LABELS[r.service_type as AmcServiceType] ?? r.service_type} ({r.channel})
+          </div>
+        </div>
+      ),
+    })),
+  ].sort((a, b) => (b.ts || '').localeCompare(a.ts || ''));
+
+  return (
+    <div className="pt-2" style={{ borderTop: '1px solid #16304d' }}>
+      <div className="text-slate-500 text-[0.68rem] uppercase tracking-wide mb-2">Service history</div>
+      {rows.length === 0 ? (
+        <div className="text-slate-600 text-[0.82rem]">No service history yet.</div>
+      ) : (
+        rows.map((r) => r.node)
+      )}
+    </div>
   );
 }

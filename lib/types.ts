@@ -195,6 +195,55 @@ export interface Firm {
   created_at?: string | null;
 }
 
+// ── AMC / Servicing ─────────────────────────────────────────────────────────
+
+export type AmcPlanType = 'none' | 'partial' | 'full';
+
+export interface ProjectAmc {
+  id: string;
+  project_id: string;
+  amc_taken: boolean;
+  plan_type: AmcPlanType | string;
+  reminder_interval_months: number;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export type AmcCustomerResponse = 'none' | 'proposed' | 'said_yes' | 'declined';
+
+export interface ProjectAmcService {
+  id: string;
+  project_id: string;
+  service_type: string;
+  in_amc: boolean;
+  customer_response: AmcCustomerResponse | string;
+  /** Set when formalized: recurring (repeat every interval_months) or a single one-off service. */
+  is_recurring: boolean;
+  interval_months: number;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface AmcServiceLog {
+  id: string;
+  project_id: string;
+  service_type: string;
+  service_date: string;
+  technician?: string | null;
+  amount?: number | null;
+  note?: string | null;
+  created_at?: string | null;
+}
+
+export interface AmcReminderLog {
+  id: string;
+  project_id: string;
+  service_type: string;
+  channel: string;
+  note?: string | null;
+  created_at?: string | null;
+}
+
 // ── Inventory ────────────────────────────────────────────────────────────────
 
 export interface InventoryItem {

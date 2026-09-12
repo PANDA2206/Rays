@@ -27,6 +27,7 @@ const NAV: NavItem[] = [
   { label: 'Settings', icon: '⚙️', href: '/settings' },
   { label: 'Inventory', icon: '📦', href: '/inventory' }, // NAV[7]
   { label: 'Quotation', icon: '🧾', href: '/quotation' }, // NAV[8]
+  { label: 'Servicing', icon: '🛠️', href: '/servicing' }, // NAV[9]
 ];
 
 /**
@@ -114,6 +115,7 @@ function Sidebar() {
         <div className="h-2" />
         <NavLink item={NAV[7]} active={isActive('/inventory')} />
         <NavLink item={NAV[8]} active={isActive('/quotation')} />
+        <NavLink item={NAV[9]} active={isActive('/servicing')} />
 
         {isAdmin && (
           <>

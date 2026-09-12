@@ -17,7 +17,12 @@ import type {
   InventoryMovement,
   InventoryExpense,
   QuotationTemplate,
+  ProjectAmc,
+  ProjectAmcService,
+  AmcServiceLog,
+  AmcReminderLog,
 } from './types';
+import { AMC_SERVICE_TYPES } from './amc';
 
 // Meter Testing runs at #6, ahead of fabrication/installation; the three steps it
 // overtakes shift down to 7-9. Existing projects are renumbered by
@@ -335,6 +340,112 @@ export async function getProjectLogs(projectId: string, limit = 6): Promise<Acti
   } catch {
     return [];
   }
+}
+
+// ── AMC / Servicing ──────────────────────────────────────────────────────────
+
+/** Fetch (or seed) the one AMC master row for a project. */
+export async function getOrCreateProjectAmc(projectId: string): Promise<ProjectAmc> {
+  const { data } = await supabase.from('project_amc').select('*').eq('project_id', projectId);
+  let rows = (data ?? []) as ProjectAmc[];
+  if (rows.length === 0) {
+    await supabase.from('project_amc').insert({ project_id: projectId });
+    const { data: seeded } = await supabase.from('project_amc').select('*').eq('project_id', projectId);
+    rows = (seeded ?? []) as ProjectAmc[];
+  }
+  return rows[0];
+}
+
+export async function updateProjectAmc(id: string, data: Partial<ProjectAmc>): Promise<void> {
+  await supabase.from('project_amc').update(data).eq('id', id);
+}
+
+/** Fetch (or seed) the 3 fixed service rows for a project. */
+export async function getOrCreateAmcServices(projectId: string): Promise<ProjectAmcService[]> {
+  const { data } = await supabase.from('project_amc_services').select('*').eq('project_id', projectId);
+  let rows = (data ?? []) as ProjectAmcService[];
+  if (rows.length === 0) {
+    await supabase.from('project_amc_services').insert(
+      AMC_SERVICE_TYPES.map((t) => ({ project_id: projectId, service_type: t }))
+    );
+    const { data: seeded } = await supabase.from('project_amc_services').select('*').eq('project_id', projectId);
+    rows = (seeded ?? []) as ProjectAmcService[];
+  } else {
+    const existingTypes = new Set(rows.map((r) => r.service_type));
+    const missing = AMC_SERVICE_TYPES.filter((t) => !existingTypes.has(t));
+    if (missing.length) {
+      await supabase.from('project_amc_services').insert(
+        missing.map((t) => ({ project_id: projectId, service_type: t }))
+      );
+      const { data: refreshed } = await supabase.from('project_amc_services').select('*').eq('project_id', projectId);
+      rows = (refreshed ?? []) as ProjectAmcService[];
+    }
+  }
+  return rows;
+}
+
+/** Toggling in_amc -> true resets customer_response, so a formalized service
+ *  never carries a stale 'said_yes'/'proposed' value. */
+export async function updateAmcService(id: string, data: Partial<ProjectAmcService>): Promise<void> {
+  const payload = data.in_amc === true ? { ...data, customer_response: 'none' } : data;
+  await supabase.from('project_amc_services').update(payload).eq('id', id);
+}
+
+export async function getAmcServiceLogs(projectId: string): Promise<AmcServiceLog[]> {
+  const { data } = await supabase
+    .from('amc_service_logs')
+    .select('*')
+    .eq('project_id', projectId)
+    .order('service_date', { ascending: false });
+  return data ?? [];
+}
+
+export async function addAmcServiceLog(row: Partial<AmcServiceLog>): Promise<void> {
+  await supabase.from('amc_service_logs').insert(row);
+}
+
+export async function deleteAmcServiceLog(id: string): Promise<void> {
+  await supabase.from('amc_service_logs').delete().eq('id', id);
+}
+
+export async function getAmcReminderLogs(projectId: string): Promise<AmcReminderLog[]> {
+  const { data } = await supabase
+    .from('amc_reminder_logs')
+    .select('*')
+    .eq('project_id', projectId)
+    .order('created_at', { ascending: false });
+  return data ?? [];
+}
+
+export async function addAmcReminderLog(row: Partial<AmcReminderLog>): Promise<void> {
+  await supabase.from('amc_reminder_logs').insert(row);
+}
+
+// Bulk functions for the /servicing dashboard. Never seed defaults (mirrors
+// getProjectSteps(projectIds)) — a project never opened in its Servicing card
+// simply has zero rows, and the dashboard fills the gaps client-side.
+
+export async function getAllProjectAmc(): Promise<ProjectAmc[]> {
+  const { data } = await supabase.from('project_amc').select('*');
+  return data ?? [];
+}
+
+export async function getAmcServicesForProjects(projectIds: string[]): Promise<ProjectAmcService[]> {
+  if (!projectIds.length) return [];
+  const { data } = await supabase.from('project_amc_services').select('*').in('project_id', projectIds);
+  return data ?? [];
+}
+
+export async function getAmcServiceLogsForProjects(projectIds: string[]): Promise<AmcServiceLog[]> {
+  if (!projectIds.length) return [];
+  const { data } = await supabase.from('amc_service_logs').select('*').in('project_id', projectIds);
+  return data ?? [];
+}
+
+export async function getAmcReminderLogsForProjects(projectIds: string[]): Promise<AmcReminderLog[]> {
+  if (!projectIds.length) return [];
+  const { data } = await supabase.from('amc_reminder_logs').select('*').in('project_id', projectIds);
+  return data ?? [];
 }
 
 // ── App users ────────────────────────────────────────────────────────────────
