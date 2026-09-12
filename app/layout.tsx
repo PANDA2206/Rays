@@ -3,8 +3,8 @@ import './globals.css';
 import { AuthProvider } from '@/lib/auth';
 
 export const metadata: Metadata = {
-  title: 'VOLTEDGE Dashboard',
-  description: 'Solar Project Management Dashboard — VOLTEDGE Energy Solutions',
+  title: 'RAYS Dashboard',
+  description: 'Solar Project Management Dashboard — RAYS Energy Solutions',
 };
 
 export default function RootLayout({

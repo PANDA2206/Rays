@@ -70,9 +70,9 @@ const NAVY = '#1f3864';
  *
  * Deliberately not the selected firm: the firm switcher decides whose books a
  * job belongs to, which is internal accounting. Quotations always go out under
- * the Voltedge brand, matching the logo.
+ * the Rays brand, matching the logo.
  */
-const BRAND = 'VOLTEDGE ENERGY SOLUTIONS';
+const BRAND = 'RAYS ENERGY SOLUTIONS';
 
 function Sheet({
   children, last, bg, flow,
@@ -197,7 +197,7 @@ export default function QuotationDoc({ data }: { data: QuotationData }) {
               }}
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src="/logo.png" alt="VOLTEDGE Energy Solutions" style={{ width: '78mm', height: 'auto', display: 'block' }} />
+              <img src="/logo.png" alt="RAYS Energy Solutions" style={{ width: '78mm', height: 'auto', display: 'block' }} />
             </div>
           </div>
           <div style={{ background: NAVY, color: '#fff', display: 'inline-block', padding: '3mm 8mm', fontSize: '26pt', fontWeight: 800 }}>

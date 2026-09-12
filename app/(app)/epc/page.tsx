@@ -70,7 +70,7 @@ export default function EpcPage() {
       <div>
         <div className="text-lg font-bold">🏭 EPC Partners — Funds &amp; GST <span className="ve-badge ml-2 align-middle" style={{ background: '#16304d', color: '#93c5fd', fontWeight: 700 }}>{firmName}</span></div>
         <div className="text-slate-500 text-sm">
-          Internal accounting between Voltedge and execution partners (EPCs). Not linked to customer payments.
+          Internal accounting between Rays and execution partners (EPCs). Not linked to customer payments.
         </div>
       </div>
 
@@ -481,7 +481,7 @@ function AddTxnForm({
         <datalist id="epc-cust">{customers.map((c) => <option key={c} value={c} />)}</datalist>
       </Labeled>
 
-      <div className="font-semibold text-sm">Purchase (Voltedge buys) — base auto-calculated from stock cost × qty</div>
+      <div className="font-semibold text-sm">Purchase (Rays buys) — base auto-calculated from stock cost × qty</div>
       <div className="grid grid-cols-5 gap-2">
         <select className="ve-input" value={v.purchaseItemId} onChange={(e) => s('purchaseItemId', e.target.value)}>
           <option value="">— Material (from stock) —</option>
@@ -494,7 +494,7 @@ function AddTxnForm({
       </div>
       {purchaseItem && <div className="text-slate-500 text-[0.7rem]">Stock cost {formatCurrency(num(purchaseItem.unit_cost))}/{purchaseItem.unit} × {v.pqty || 0} = base {formatCurrency(pbase)}</div>}
 
-      <div className="font-semibold text-sm">Sale (Voltedge sells to EPC) — reduces stock</div>
+      <div className="font-semibold text-sm">Sale (Rays sells to EPC) — reduces stock</div>
       <div className="grid grid-cols-5 gap-2">
         <select className="ve-input" value={v.saleItemId} onChange={(e) => s('saleItemId', e.target.value)}>
           <option value="">— Item (from stock) —</option>

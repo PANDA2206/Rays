@@ -83,7 +83,7 @@ export default function ProjectDetailPage() {
   const [insts, setInsts] = useState<Installment[]>([]);
   const [notes, setNotes] = useState<ProjectNote[]>([]);
   const [logs, setLogs] = useState<ActivityLog[]>([]);
-  const [epcNames, setEpcNames] = useState<string[]>(['Voltedge']);
+  const [epcNames, setEpcNames] = useState<string[]>(['Rays']);
   const [amc, setAmc] = useState<ProjectAmc | null>(null);
   const [amcServices, setAmcServices] = useState<ProjectAmcService[]>([]);
   const [amcLogs, setAmcLogs] = useState<AmcServiceLog[]>([]);
@@ -111,8 +111,8 @@ export default function ProjectDetailPage() {
     setNotes(n);
     setLogs(l);
     setEpcNames([
-      'Voltedge',
-      ...epcs.map((e) => e.name).filter((nm) => nm && nm.toLowerCase() !== 'voltedge'),
+      'Rays',
+      ...epcs.map((e) => e.name).filter((nm) => nm && nm.toLowerCase() !== 'rays'),
     ]);
     // AMC/servicing only applies once a project is completed.
     if (p.project_status === 'completed') {

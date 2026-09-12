@@ -42,7 +42,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
         <div className="text-center pt-6 pb-4">
           <Image
             src="/logo.png"
-            alt="VOLTEDGE"
+            alt="RAYS"
             width={340}
             height={120}
             priority

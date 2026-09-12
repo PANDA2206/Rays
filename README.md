@@ -1,13 +1,13 @@
-# VOLTEDGE Dashboard — Next.js (Vercel)
+# RAYS Dashboard — Next.js (Vercel)
 
-A full JavaScript/TypeScript rewrite of the VOLTEDGE Energy Solutions solar-project
+A full JavaScript/TypeScript rewrite of the RAYS Energy Solutions solar-project
 dashboard. This is a **faithful replica of the original Python/Streamlit app**, rebuilt
 in **Next.js + React + Tailwind** so it deploys 100% on **Vercel**. It uses the **same
 Supabase database** — no separate backend, the browser talks to Supabase directly with
 the anon key (exactly like the Streamlit app did).
 
 > The original Python app still lives untouched in
-> `VOLTEDGE ENERGY SOLUTIONS/dashboard/streamlit_app/`. This is a standalone, separate
+> `RAYS ENERGY SOLUTIONS/dashboard/streamlit_app/`. This is a standalone, separate
 > codebase/repo.
 
 ## Stack

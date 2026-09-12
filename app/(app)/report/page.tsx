@@ -121,7 +121,7 @@ export default function ReportPage() {
     const body = projects
       .map((p) => cols.map((c) => `"${(p as unknown as Record<string, unknown>)[c] ?? ''}"`).join(','))
       .join('\n');
-    downloadCsv('voltedge_admin_report.csv', header + body);
+    downloadCsv('rays_admin_report.csv', header + body);
   };
 
   return (
@@ -262,7 +262,7 @@ function ReceiptStatement({ projects, insts }: { projects: Project[]; insts: Ins
     const body = rows
       .map((r) => [r.date, r.customer, r.epc, r.type, r.amount].map((x) => `"${x ?? ''}"`).join(','))
       .join('\n');
-    downloadCsv('voltedge_received_statement.csv', header + body + `\n\nTotal,,,,${shownTotal.toFixed(2)}\n`);
+    downloadCsv('rays_received_statement.csv', header + body + `\n\nTotal,,,,${shownTotal.toFixed(2)}\n`);
   };
 
   return (

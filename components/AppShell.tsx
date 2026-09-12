@@ -94,7 +94,7 @@ function Sidebar() {
       <div className="px-1 pb-4 text-center">
         <Image
           src="/logo.png"
-          alt="VOLTEDGE"
+          alt="RAYS"
           width={215}
           height={70}
           className="mx-auto w-full max-w-[200px] h-auto"

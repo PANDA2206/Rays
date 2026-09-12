@@ -86,8 +86,8 @@ export default function SettingsPage() {
       </div>
 
       <div className="text-center mt-8 pt-3" style={{ borderTop: '1px solid #1e293b' }}>
-        <div className="text-blue-400 font-bold text-sm">VoltEdge ERP v2.0</div>
-        <div className="text-slate-600 text-xs">© 2026 VoltEdge Energy Solutions. All rights reserved.</div>
+        <div className="text-blue-400 font-bold text-sm">RAYS ERP v2.0</div>
+        <div className="text-slate-600 text-xs">© 2026 Rays Energy Solutions. All rights reserved.</div>
       </div>
     </div>
   );
